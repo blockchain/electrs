@@ -388,7 +388,7 @@ impl Daemon {
     }
 
     fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
-        info!("Calling jsonrpc method {}", method);
+        info!("Calling jsonrpc method {}, request {}", method, request);
         let mut conn = self.conn.lock().unwrap();
         let timer = self.latency.with_label_values(&[method]).start_timer();
         let request = request.to_string();
