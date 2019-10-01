@@ -199,7 +199,6 @@ impl Connection {
             request.len(),
             request,
         );
-        info!("Request: {}", request);
         self.tx.write_all(msg.as_bytes()).chain_err(|| {
             ErrorKind::Connection("disconnected from daemon while sending".to_owned())
         })
