@@ -217,6 +217,8 @@ impl Connection {
         let mut headers = HashMap::new();
         for line in iter {
             let line = line.chain_err(|| ErrorKind::Connection("failed to read".to_owned()))?;
+            info!("line: {}", line);
+
             if line.is_empty() {
                 in_header = false; // next line should contain the actual response.
             } else if in_header {
