@@ -193,7 +193,8 @@ impl Connection {
     fn send(&mut self, request: &str) -> Result<()> {
         let cookie = &self.cookie_getter.get()?;
         let msg = format!(
-            "POST / HTTP/1.1\nAuthorization: Basic {}\nContent-Length: {}\n\n{}",
+            "POST / HTTP/1.1\nHost: {}\nAuthorization: Basic {}\nContent-Length: {}\n\n{}",
+            &self.addr.ip(),
             base64::encode(cookie),
             request.len(),
             request,
