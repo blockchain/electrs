@@ -199,6 +199,7 @@ impl Connection {
             request.len(),
             request,
         );
+        info!("Request: {}", request)
         self.tx.write_all(msg.as_bytes()).chain_err(|| {
             ErrorKind::Connection("disconnected from daemon while sending".to_owned())
         })
@@ -388,7 +389,7 @@ impl Daemon {
     }
 
     fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
-        info!("Calling jsonrpc method {}, request {}", method, request);
+        info!("Calling jsonrpc method {}", method);
         let mut conn = self.conn.lock().unwrap();
         let timer = self.latency.with_label_values(&[method]).start_timer();
         let request = request.to_string();
