@@ -167,6 +167,7 @@ impl Connection {
         signal: Waiter,
     ) -> Result<Connection> {
         let conn = tcp_connect(addr, &signal)?;
+        conn.set_read_timeout(Some(Duration::from_secs(600)));
         let reader = BufReader::new(
             conn.try_clone()
                 .chain_err(|| format!("failed to clone {:?}", conn))?,
