@@ -126,9 +126,14 @@ fn blkfiles_fetcher(
                     .into_iter()
                     .filter_map(|(block, size)| {
                         let blockhash = block.bitcoin_hash();
+                        info!("Block: {:?}", block);
+
                         entry_map
                             .remove(&blockhash)
-                            .map(|entry| BlockEntry { block, entry, size })
+                            .map(|entry| {
+                                info!("HeaderEntry: {:?}", entry);
+                                BlockEntry { block, entry, size }
+                            })
                             .or_else(|| {
                                 trace!("skipping block {}", blockhash);
                                 None
