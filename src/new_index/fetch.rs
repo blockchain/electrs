@@ -117,6 +117,8 @@ fn blkfiles_fetcher(
     let mut entry_map: HashMap<Sha256dHash, HeaderEntry> =
         new_headers.into_iter().map(|h| (*h.hash(), h)).collect();
 
+    info!("Entry map: {:?}", entry_map)
+
     let parser = blkfiles_parser(blkfiles_reader(blk_files), magic);
     Ok(Fetcher::from(
         chan.into_receiver(),
