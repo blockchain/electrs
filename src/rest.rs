@@ -1,10 +1,10 @@
 use crate::chain::{address, Network, OutPoint, Transaction, TxIn, TxOut};
 use crate::config::Config;
 use crate::errors;
-use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo, ScriptStats};
+use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
+    script_to_address, BlockHeaderMeta, BlockId, FullHash, TransactionStatus, AddressInfo
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -33,8 +33,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
-use std::slice::Split;
-use syntax::util::map_in_place::MapInPlace;
 
 const CHAIN_TXS_PER_PAGE: usize = 25;
 const MAX_MEMPOOL_TXS: usize = 50;
@@ -664,27 +662,14 @@ fn handle_request(
         }
         (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
-            let split_vec: Vec<&str> = script_str.split("|").collect();
-            let script_hashes: Vec<FullHash> = split_vec
-                .iter()
-                .map(|&script| to_script_hash(script_type, script, &config.network_type)?)
+            let stats: Vec<AddressInfo> = script_str
+                .split("|")
+                .map(|script| to_scripthash(script_type, script, &config.network_type))
+                .filter_map(Result::ok)
+                .map(|hash| AddressInfo::new(hash, query.stats(&hash[..])))
                 .collect();
 
-            let multi_stats: Vec<(ScriptStats, ScriptStats)> = script_hashes
-                .iter()
-                .map(|&hash| query.stats(&hash[..]))
-                .collect();
-
-            json_response(json!({multi_stats}), TTL_SHORT);
-
-//            json_response(
-//                json!({
-//                    *script_type: script_str,
-//                    "chain_stats": stats.0,
-//                    "mempool_stats": stats.1,
-//                }),
-//                TTL_SHORT,
-//            )
+            json_response(json!(stats), TTL_SHORT)
         }
         (
             &Method::GET,

@@ -14,7 +14,8 @@ use elements::encode::serialize;
 
 use crate::chain::{Block, BlockHeader};
 use crate::errors::*;
-use crate::new_index::BlockEntry;
+use crate::new_index::{BlockEntry, ScriptStats};
+use crate::util::FullHash;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockId {
@@ -313,5 +314,22 @@ impl BlockMeta {
                 .as_f64()
                 .chain_err(|| "weight not a number")? as u32,
         })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AddressInfo {
+    pub hash: FullHash,
+    pub chain_stats: ScriptStats,
+    pub mempool_stats: ScriptStats,
+}
+
+impl AddressInfo {
+    pub fn new(hash: FullHash, stats: (ScriptStats, ScriptStats)) -> AddressInfo {
+        AddressInfo {
+            hash,
+            chain_stats: stats.0,
+            mempool_stats: stats.1,
+        }
     }
 }
