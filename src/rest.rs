@@ -660,13 +660,16 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), ttl)
         }
-        (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
-        | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
-            let stats: Vec<AddressInfo> = script_str
+        (&Method::GET, Some(script_type @ &"address"), Some(multiaddr), None, None, None)
+        | (&Method::GET, Some(script_type @ &"scripthash"), Some(multiaddr), None, None, None) => {
+            let stats: Vec<AddressInfo> = multiaddr
                 .split("+")
-                .map(|script| to_scripthash(script_type, script, &config.network_type))
-                .filter_map(Result::ok)
-                .map(|hash| AddressInfo::new(hash, query.stats(&hash[..])))
+                .map(|addr| (addr, to_scripthash(script_type, addr, &config.network_type)))
+                .filter_map(|(addr, hash)| match hash {
+                    Ok(h)  => Some((addr, h)),
+                    Err(_) => None,
+                })
+                .map(|(addr, hash)| AddressInfo::new(String::from(addr), query.stats(&hash[..])))
                 .collect();
 
             json_response(json!(stats), TTL_SHORT)
