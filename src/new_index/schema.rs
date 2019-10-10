@@ -771,6 +771,7 @@ fn load_blockhashes(db: &DB, prefix: &[u8]) -> HashSet<Sha256dHash> {
         .collect()
 }
 
+#[allow(dead_code)]
 fn load_blockheaders(db: &DB) -> HashMap<Sha256dHash, BlockHeader> {
     db.iter_scan(&BlockRow::header_filter())
         .map(BlockRow::from_row)
