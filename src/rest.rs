@@ -663,7 +663,7 @@ fn handle_request(
         (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
             let stats: Vec<AddressInfo> = script_str
-                .split("|")
+                .split("+")
                 .map(|script| to_scripthash(script_type, script, &config.network_type))
                 .filter_map(Result::ok)
                 .map(|hash| AddressInfo::new(hash, query.stats(&hash[..])))
