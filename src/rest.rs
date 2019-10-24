@@ -37,6 +37,7 @@ use url::form_urlencoded;
 const CHAIN_TXS_PER_PAGE: usize = 25;
 const MAX_MEMPOOL_TXS: usize = 50;
 const BLOCK_LIMIT: usize = 10;
+const MULTIADDR_SEPARATOR: &str = "%7C";
 
 const TTL_LONG: u32 = 157784630; // ttl for static resources (5 years)
 const TTL_SHORT: u32 = 10; // ttl for volatie resources
@@ -908,7 +909,7 @@ fn handle_request(
 
         (&Method::GET, Some(script_type @ &"multiaddr"), Some(multiaddr), None, None, None) => {
             let stats: Vec<AddressInfo> = multiaddr
-                .split("+")
+                .split(MULTIADDR_SEPARATOR)
                 .map(|addr| (addr, to_scripthash(script_type, addr, &config.network_type)))
                 .filter_map(|(addr, hash)| match hash {
                     Ok(h)  => Some((addr, h)),
