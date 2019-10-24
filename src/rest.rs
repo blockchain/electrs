@@ -4,7 +4,7 @@ use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
+    script_to_address, AddressInfo, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -472,7 +472,7 @@ fn prepare_txs(
         .collect()
 }
 
-type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
+type BoxFut = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 
 pub fn run_server(config: Arc<Config>, query: Arc<Query>) -> Handle {
     let addr = &config.http_addr;
@@ -906,6 +906,20 @@ fn handle_request(
             json_response(query.estimate_fee_targets(), TTL_SHORT)
         }
 
+        (&Method::GET, Some(script_type @ &"multiaddr"), Some(multiaddr), None, None, None) => {
+            let stats: Vec<AddressInfo> = multiaddr
+                .split("+")
+                .map(|addr| (addr, to_scripthash(script_type, addr, &config.network_type)))
+                .filter_map(|(addr, hash)| match hash {
+                    Ok(h)  => Some((addr, h)),
+                    Err(_) => None,
+                })
+                .map(|(addr, hash)| AddressInfo::new(String::from(addr), query.stats(&hash[..])))
+                .collect();
+
+            json_response(json!(stats), TTL_SHORT)
+        }
+
         #[cfg(feature = "liquid")]
         (&Method::GET, Some(&"asset"), Some(asset_str), None, None, None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
@@ -1044,11 +1058,11 @@ fn blocks(query: &Query, start_height: Option<usize>) -> Result<Response<Body>, 
 }
 
 fn to_scripthash(
-    script_type: &str,
+    _script_type: &str,
     script_str: &str,
     network: &Network,
 ) -> Result<FullHash, HttpError> {
-    let try_addr = address::Address::from_str(addr);
+    let try_addr = address::Address::from_str(script_str);
 
     match try_addr {
         Ok(addr) => {
