@@ -1048,10 +1048,17 @@ fn to_scripthash(
     script_str: &str,
     network: &Network,
 ) -> Result<FullHash, HttpError> {
-    match script_type {
-        "address" => address_to_scripthash(script_str, network),
-        "scripthash" => parse_scripthash(script_str),
-        _ => bail!("Invalid script type".to_string()),
+    let try_addr = address::Address::from_str(addr);
+
+    match try_addr {
+        Ok(addr) => {
+            match addr.address_type() {
+                Some(address::AddressType::P2pkh) => address_to_scripthash(script_str, network),
+                Some(address::AddressType::P2sh) => parse_scripthash(script_str),
+                _ => bail!("Invalid address or scripthash".to_string()),
+            }
+        },
+        Err(_) => bail!("Invalid address or scripthash".to_string())
     }
 }
 
