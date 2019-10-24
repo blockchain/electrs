@@ -15,6 +15,7 @@ use elements::encode::serialize;
 use crate::chain::{Block, BlockHeader};
 use crate::errors::*;
 use crate::new_index::{BlockEntry, ScriptStats};
+use crate::rest::TransactionValue;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockId {
@@ -316,17 +317,19 @@ impl BlockMeta {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct AddressInfo {
     pub address: String,
+    pub chain_txs: Vec<TransactionValue>,
     pub chain_stats: ScriptStats,
     pub mempool_stats: ScriptStats,
 }
 
 impl AddressInfo {
-    pub fn new(address: String, stats: (ScriptStats, ScriptStats)) -> AddressInfo {
+    pub fn new(address: String, stats: (ScriptStats, ScriptStats), chain_txs: Vec<TransactionValue>) -> AddressInfo {
         AddressInfo {
             address,
+            chain_txs,
             chain_stats: stats.0,
             mempool_stats: stats.1,
         }

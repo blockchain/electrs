@@ -93,7 +93,7 @@ impl From<BlockHeaderMeta> for BlockValue {
 }
 
 #[derive(Serialize, Deserialize)]
-struct TransactionValue {
+pub(crate) struct TransactionValue {
     txid: Sha256dHash,
     version: u32,
     locktime: u32,
@@ -915,7 +915,19 @@ fn handle_request(
                     Ok(h)  => Some((addr, h)),
                     Err(_) => None,
                 })
-                .map(|(addr, hash)| AddressInfo::new(String::from(addr), query.stats(&hash[..])))
+                .map(|(addr, hash)| {
+                    let chain_txs = query
+                        .chain()
+                        .history(&hash, None, CHAIN_TXS_PER_PAGE)
+                        .into_iter()
+                        .map(|(tx, blockid)| (tx, Some(blockid)))
+                        .collect();
+
+                    let tx_values = prepare_txs(chain_txs, query, config);
+                    let stats = query.stats(&hash[..]);
+
+                    return AddressInfo::new(String::from(addr), stats, tx_values);
+                })
                 .collect();
 
             json_response(json!(stats), TTL_SHORT)
