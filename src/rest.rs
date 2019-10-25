@@ -13,11 +13,14 @@ use bitcoin::consensus::encode;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256d::Hash as Sha256dHash, Error as HashError};
 use bitcoin::{BitcoinHash, Script};
+use bitcoin::network::constants::Network::Bitcoin;
+use bitcoin::util::bip32::{DerivationPath, ExtendedPubKey};
 use futures::sync::oneshot;
 use hex::{self, FromHexError};
 use hyper::rt::{self, Future, Stream};
 use hyper::service::service_fn;
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use secp256k1::{self, Secp256k1};
 
 #[cfg(feature = "liquid")]
 use {
@@ -34,15 +37,19 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
+use std::borrow::Borrow;
 
 const CHAIN_TXS_PER_PAGE: usize = 25;
 const MAX_MEMPOOL_TXS: usize = 50;
 const BLOCK_LIMIT: usize = 10;
-const MULTIADDR_SEPARATOR: &str = "%7C";
 
 const TTL_LONG: u32 = 157784630; // ttl for static resources (5 years)
 const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
+
+const MULTIADDR_SEPARATOR: &str = "%7C";
+const DERIVE_MAX: u32 = 100;
+const XPUB_PREFIX: &str = "xpub";
 
 #[derive(Serialize, Deserialize)]
 pub struct BlockValue {
@@ -1011,6 +1018,8 @@ fn handle_request(
         }
         // GET /multiaddr/:multiaddr
         (&Method::GET, Some(script_type @ &"multiaddr"), Some(multiaddr), None, None, None) => {
+
+
             let stats: Vec<AddressInfo> = multiaddr
                 .split(MULTIADDR_SEPARATOR)
                 .map(|addr| (addr, to_scripthash(script_type, addr, &config.network_type)))
@@ -1183,6 +1192,29 @@ fn blocks(query: &Query, start_height: Option<usize>) -> Result<Response<Body>, 
         }
     }
     json_response(values, TTL_SHORT)
+}
+
+fn xpub_or_else(input: &str) -> Vec<String> {
+    if input.starts_with(XPUB_PREFIX) {
+        let secp = Secp256k1::new();
+
+        return (0..DERIVE_MAX)
+            .map(|i| derive_by_index(input, i, &secp))
+            .collect();
+    }
+
+    return vec![input.to_owned()];
+}
+
+fn derive_by_index(input: &str, i: u32, secp: &secp256k1::Secp256k1<secp256k1::All>) -> String {
+    let path = format!("m/0/{}", i);
+    let path_ref = path.as_ref();
+    let derivation = DerivationPath::from_str(path_ref).unwrap();
+
+    let xpub = ExtendedPubKey::from_str(input).unwrap();
+    let child = xpub.derive_pub(secp, &derivation).unwrap();
+    let addr = address::Address::p2wpkh(child.public_key.borrow(), Bitcoin);
+    return addr.to_string()
 }
 
 fn to_scripthash(
