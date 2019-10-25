@@ -321,15 +321,22 @@ impl BlockMeta {
 pub struct AddressInfo {
     pub address: String,
     pub chain_txs: Vec<TransactionValue>,
+    pub mempool_txs: Vec<TransactionValue>,
     pub chain_stats: ScriptStats,
     pub mempool_stats: ScriptStats,
 }
 
 impl AddressInfo {
-    pub fn new(address: String, stats: (ScriptStats, ScriptStats), chain_txs: Vec<TransactionValue>) -> AddressInfo {
+    pub fn new(
+        address: String,
+        stats: (ScriptStats, ScriptStats),
+        chain_txs: Vec<TransactionValue>,
+        mempool_txs: Vec<TransactionValue>,
+    ) -> AddressInfo {
         AddressInfo {
             address,
             chain_txs,
+            mempool_txs,
             chain_stats: stats.0,
             mempool_stats: stats.1,
         }

@@ -93,7 +93,7 @@ impl From<BlockHeaderMeta> for BlockValue {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct TransactionValue {
+pub struct TransactionValue {
     txid: Sha256dHash,
     version: u32,
     locktime: u32,
@@ -163,7 +163,7 @@ impl TransactionValue {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct TxInValue {
+pub struct TxInValue {
     txid: Sha256dHash,
     vout: u32,
     prevout: Option<TxOutValue>,
@@ -235,7 +235,7 @@ impl TxInValue {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct TxOutValue {
+pub struct TxOutValue {
     scriptpubkey: Script,
     scriptpubkey_asm: String,
     scriptpubkey_type: String,
@@ -912,21 +912,29 @@ fn handle_request(
                 .split(MULTIADDR_SEPARATOR)
                 .map(|addr| (addr, to_scripthash(script_type, addr, &config.network_type)))
                 .filter_map(|(addr, hash)| match hash {
-                    Ok(h)  => Some((addr, h)),
+                    Ok(h) => Some((addr, h)),
                     Err(_) => None,
                 })
                 .map(|(addr, hash)| {
-                    let chain_txs = query
+                    let chain_txs_raw = query
                         .chain()
                         .history(&hash, None, CHAIN_TXS_PER_PAGE)
                         .into_iter()
                         .map(|(tx, blockid)| (tx, Some(blockid)))
                         .collect();
 
-                    let tx_values = prepare_txs(chain_txs, query, config);
+                    let mempool_txs_raw = query
+                        .mempool()
+                        .history(&hash, MAX_MEMPOOL_TXS)
+                        .into_iter()
+                        .map(|tx| (tx, None))
+                        .collect();
+
+                    let chain_txs = prepare_txs(chain_txs_raw, query, config);
+                    let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
                     let stats = query.stats(&hash[..]);
 
-                    return AddressInfo::new(String::from(addr), stats, tx_values);
+                    return AddressInfo::new(String::from(addr), stats, chain_txs, mempool_txs);
                 })
                 .collect();
 
@@ -1078,14 +1086,12 @@ fn to_scripthash(
     let try_addr = address::Address::from_str(script_str);
 
     match try_addr {
-        Ok(addr) => {
-            match addr.address_type() {
-                Some(address::AddressType::P2pkh) => address_to_scripthash(script_str, network),
-                Some(address::AddressType::P2sh) => parse_scripthash(script_str),
-                _ => bail!("Invalid address or scripthash".to_string()),
-            }
+        Ok(addr) => match addr.address_type() {
+            Some(address::AddressType::P2pkh) => address_to_scripthash(script_str, network),
+            Some(address::AddressType::P2sh) => parse_scripthash(script_str),
+            _ => bail!("Invalid address or scripthash".to_string()),
         },
-        Err(_) => bail!("Invalid address or scripthash".to_string())
+        Err(_) => bail!("Invalid address or scripthash".to_string()),
     }
 }
 
