@@ -561,22 +561,24 @@ fn handle_request(
         path.get(3),
         path.get(4),
     ) {
+        // GET /blocks/tip/hash
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
             StatusCode::OK,
             query.chain().best_hash().to_hex(),
             TTL_SHORT,
         ),
-
+        // GET /blocks/tip/height
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => http_message(
             StatusCode::OK,
             query.chain().best_height().to_string(),
             TTL_SHORT,
         ),
-
+        // GET /blocks[/:start_height]
         (&Method::GET, Some(&"blocks"), start_height, None, None, None) => {
             let start_height = start_height.and_then(|height| height.parse::<usize>().ok());
             blocks(&query, start_height)
         }
+        // GET /block-height/:height
         (&Method::GET, Some(&"block-height"), Some(height), None, None, None) => {
             let height = height.parse::<usize>()?;
             let header = query
@@ -586,6 +588,7 @@ fn handle_request(
             let ttl = ttl_by_depth(Some(height), query);
             http_message(StatusCode::OK, header.hash().to_hex(), ttl)
         }
+        // GET /block/:hash
         (&Method::GET, Some(&"block"), Some(hash), None, None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let blockhm = query
@@ -595,12 +598,14 @@ fn handle_request(
             let block_value = BlockValue::from(blockhm);
             json_response(block_value, TTL_LONG)
         }
+        // GET /block/:hash/status
         (&Method::GET, Some(&"block"), Some(hash), Some(&"status"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let status = query.chain().get_block_status(&hash);
             let ttl = ttl_by_depth(status.height, query);
             json_response(status, ttl)
         }
+        // GET /block/:hash/txids
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txids"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let txids = query
@@ -609,6 +614,7 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
+        // GET /block/:hash/txid/:index
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txid"), Some(index), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let index: usize = index.parse()?;
@@ -621,6 +627,7 @@ fn handle_request(
             }
             http_message(StatusCode::OK, txids[index].to_hex(), TTL_LONG)
         }
+        // GET /block/:hash/txs[/:start_index]
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), start_index, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let txids = query
@@ -661,6 +668,8 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), ttl)
         }
+        // GET /address/:address
+        // GET /scripthash/:hash
         (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
             let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
@@ -674,6 +683,8 @@ fn handle_request(
                 TTL_SHORT,
             )
         }
+        // GET /address/:address/txs
+        // GET /scripthash/:hash/txs
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -712,7 +723,8 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
-
+        // GET /address/:address/txs/chain[/:last_seen_txid]
+        // GET /scripthash/:hash/txs/chain[/:last_seen_txid]
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -745,6 +757,8 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
+        // GET /address/:address/txs/mempool
+        // GET /scripthash/:hash/txs/mempool
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -772,7 +786,8 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
-
+        // GET /address/:address/utxo
+        // GET /scripthash/:hash/utxo
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -798,6 +813,7 @@ fn handle_request(
             // XXX paging?
             json_response(utxos, TTL_SHORT)
         }
+        // GET /tx/:txid
         (&Method::GET, Some(&"tx"), Some(hash), None, None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let tx = query
@@ -810,6 +826,7 @@ fn handle_request(
 
             json_response(tx, ttl)
         }
+        // GET /tx/:txid/hex
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"hex"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let rawtx = query
@@ -818,13 +835,14 @@ fn handle_request(
             let ttl = ttl_by_depth(query.get_tx_status(&hash).block_height, query);
             http_message(StatusCode::OK, hex::encode(rawtx), ttl)
         }
+        // GET /tx/:txid/status
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"status"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let status = query.get_tx_status(&hash);
             let ttl = ttl_by_depth(status.block_height, query);
             json_response(status, ttl)
         }
-
+        // GET /tx/:txid/merkle-proof
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"merkle-proof"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let blockid = query.chain().tx_confirming_block(&hash).ok_or_else(|| {
@@ -838,6 +856,7 @@ fn handle_request(
                 ttl,
             )
         }
+        // GET /tx/:txid/outspend/:vout
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspend"), Some(index), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let outpoint = OutPoint {
@@ -856,6 +875,7 @@ fn handle_request(
             );
             json_response(spend, ttl)
         }
+        // GET /tx/:txid/outspends
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspends"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let tx = query
@@ -874,6 +894,7 @@ fn handle_request(
             // @TODO long ttl if all outputs are either spent long ago or unspendable
             json_response(spends, TTL_SHORT)
         }
+        // POST /tx
         (&Method::GET, Some(&"broadcast"), None, None, None, None)
         | (&Method::POST, Some(&"tx"), None, None, None, None) => {
             // accept both POST and GET for backward compatibility.
@@ -890,23 +911,25 @@ fn handle_request(
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
             http_message(StatusCode::OK, txid.to_hex(), 0)
         }
-
+        // GET /mempool
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
         }
+        // GET /mempool/txids
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
+        // GET /mempool/recent
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
             let recent = mempool.recent_txs_overview();
             json_response(recent, TTL_SHORT /* TODO: TTL TBD */)
         }
-
+        // GET /fee-estimates
         (&Method::GET, Some(&"fee-estimates"), None, None, None, None) => {
             json_response(query.estimate_fee_targets(), TTL_SHORT)
         }
-
+        // GET /multiaddr/:multiaddr
         (&Method::GET, Some(script_type @ &"multiaddr"), Some(multiaddr), None, None, None) => {
             let stats: Vec<AddressInfo> = multiaddr
                 .split(MULTIADDR_SEPARATOR)
@@ -942,6 +965,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id
         (&Method::GET, Some(&"asset"), Some(asset_str), None, None, None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
             let asset_entry = query
@@ -952,6 +976,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id/txs
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"txs"), None, None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
 
@@ -977,6 +1002,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id/txs/chain[/:last_seen]
         (
             &Method::GET,
             Some(&"asset"),
@@ -999,6 +1025,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id/txs/mempool
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"txs"), Some(&"mempool"), None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
 

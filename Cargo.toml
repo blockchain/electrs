@@ -13,7 +13,7 @@ edition = "2018"
 
 [features]
 default = []
-liquid = ["elements", "lazy_static"]
+# liquid = ["elements", "lazy_static"]
 
 [dependencies]
 arraydeque = "0.4"
