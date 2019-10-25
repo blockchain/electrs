@@ -346,7 +346,7 @@ impl AddressInfo {
 #[derive(Serialize, Deserialize)]
 pub struct BlockInfo {
     pub block: BlockValue,
-    pub transactions: Vec<TransactionValue>
+    pub transactions: Vec<TransactionValue>,
 }
 
 impl BlockInfo {

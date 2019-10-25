@@ -4,7 +4,8 @@ use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, AddressInfo, BlockInfo, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
+    script_to_address, AddressInfo, BlockHeaderMeta, BlockId, BlockInfo, FullHash,
+    TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -611,7 +612,6 @@ fn handle_request(
                         .ok_or_else(|| "missing tx".to_string())
                 })
                 .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
-
 
             let ttl = ttl_by_depth(Some(height), query);
             let tx_values = prepare_txs(txs, query, config);
