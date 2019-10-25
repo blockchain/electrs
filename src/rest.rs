@@ -1017,12 +1017,17 @@ fn handle_request(
             json_response(json!(info), ttl)
         }
         // GET /multiaddr/:multiaddr
-        (&Method::GET, Some(script_type @ &"multiaddr"), Some(multiaddr), None, None, None) => {
+        (&Method::GET, Some(&"multiaddr"), Some(multiaddr), None, None, None) => {
+            let addresses = xpub_multi_or_single(multiaddr);
+            let script_type = "";
 
-
-            let stats: Vec<AddressInfo> = multiaddr
-                .split(MULTIADDR_SEPARATOR)
-                .map(|addr| (addr, to_scripthash(script_type, addr, &config.network_type)))
+            let stats: Vec<AddressInfo> = addresses
+                .into_iter()
+                .map(|addr| {
+                    let addr_copy = addr.clone();
+                    let addr_ref = addr.as_ref();
+                    return (addr_copy, to_scripthash(&script_type, addr_ref, &config.network_type))
+                })
                 .filter_map(|(addr, hash)| match hash {
                     Ok(h) => Some((addr, h)),
                     Err(_) => None,
@@ -1046,7 +1051,7 @@ fn handle_request(
                     let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
                     let stats = query.stats(&hash[..]);
 
-                    return AddressInfo::new(String::from(addr), stats, chain_txs, mempool_txs);
+                    return AddressInfo::new(addr, stats, chain_txs, mempool_txs);
                 })
                 .collect();
 
@@ -1194,12 +1199,17 @@ fn blocks(query: &Query, start_height: Option<usize>) -> Result<Response<Body>, 
     json_response(values, TTL_SHORT)
 }
 
-fn xpub_or_else(input: &str) -> Vec<String> {
+fn xpub_multi_or_single(input: &str) -> Vec<String> {
     if input.starts_with(XPUB_PREFIX) {
         let secp = Secp256k1::new();
-
         return (0..DERIVE_MAX)
             .map(|i| derive_by_index(input, i, &secp))
+            .collect();
+    } else if input.contains(MULTIADDR_SEPARATOR) {
+        return input
+            .split(MULTIADDR_SEPARATOR)
+            .into_iter()
+            .map(|i| i.to_owned())
             .collect();
     }
 
@@ -1213,8 +1223,7 @@ fn derive_by_index(input: &str, i: u32, secp: &secp256k1::Secp256k1<secp256k1::A
 
     let xpub = ExtendedPubKey::from_str(input).unwrap();
     let child = xpub.derive_pub(secp, &derivation).unwrap();
-    let addr = address::Address::p2wpkh(child.public_key.borrow(), Bitcoin);
-    return addr.to_string()
+    return address::Address::p2wpkh(child.public_key.borrow(), Bitcoin).to_string();
 }
 
 fn to_scripthash(
