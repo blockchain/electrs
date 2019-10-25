@@ -4,7 +4,7 @@ use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, AddressInfo, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
+    script_to_address, AddressInfo, BlockInfo, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -44,7 +44,7 @@ const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
 #[derive(Serialize, Deserialize)]
-struct BlockValue {
+pub struct BlockValue {
     id: String,
     height: u32,
     version: u32,
@@ -928,6 +928,39 @@ fn handle_request(
         // GET /fee-estimates
         (&Method::GET, Some(&"fee-estimates"), None, None, None, None) => {
             json_response(query.estimate_fee_targets(), TTL_SHORT)
+        }
+        // GET /block-index/:hash
+        (&Method::GET, Some(&"block-index"), Some(hash), None, None, None) => {
+            let hash = Sha256dHash::from_hex(hash)?;
+            let blockhm = query
+                .chain()
+                .get_block_with_meta(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+            let block_value = BlockValue::from(blockhm);
+
+            let txids = query
+                .chain()
+                .get_block_txids(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let confirmed_blockid = query.chain().blockid_by_hash(&hash);
+
+            let txs = txids
+                .iter()
+                .take(CHAIN_TXS_PER_PAGE)
+                .map(|txid| {
+                    query
+                        .lookup_txn(&txid)
+                        .map(|tx| (tx, confirmed_blockid.clone()))
+                        .ok_or_else(|| "missing tx".to_string())
+                })
+                .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
+
+            let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query);
+            let tx_values = prepare_txs(txs, query, config);
+            let info = BlockInfo::new(block_value, tx_values);
+
+            json_response(json!(info), ttl)
         }
         // GET /multiaddr/:multiaddr
         (&Method::GET, Some(script_type @ &"multiaddr"), Some(multiaddr), None, None, None) => {
