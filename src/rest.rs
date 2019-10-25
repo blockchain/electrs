@@ -585,8 +585,38 @@ fn handle_request(
                 .chain()
                 .header_by_height(height)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let hash = header.hash();
+
+            let blockhm = query
+                .chain()
+                .get_block_with_meta(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+            let block_value = BlockValue::from(blockhm);
+
+            let txids = query
+                .chain()
+                .get_block_txids(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let confirmed_blockid = query.chain().blockid_by_hash(&hash);
+
+            let txs = txids
+                .iter()
+                .take(CHAIN_TXS_PER_PAGE)
+                .map(|txid| {
+                    query
+                        .lookup_txn(&txid)
+                        .map(|tx| (tx, confirmed_blockid.clone()))
+                        .ok_or_else(|| "missing tx".to_string())
+                })
+                .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
+
+
             let ttl = ttl_by_depth(Some(height), query);
-            http_message(StatusCode::OK, header.hash().to_hex(), ttl)
+            let tx_values = prepare_txs(txs, query, config);
+            let info = BlockInfo::new(block_value, tx_values);
+            json_response(json!(info), ttl)
         }
         // GET /block/:hash
         (&Method::GET, Some(&"block"), Some(hash), None, None, None) => {
@@ -928,6 +958,23 @@ fn handle_request(
         // GET /fee-estimates
         (&Method::GET, Some(&"fee-estimates"), None, None, None, None) => {
             json_response(query.estimate_fee_targets(), TTL_SHORT)
+        }
+        // GET /mempool/txs
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), None, None, None) => {
+            let txs = query
+                .mempool()
+                .txids()
+                .iter()
+                .map(|txid| {
+                    query
+                        .mempool()
+                        .lookup_txn(&txid)
+                        .map(|tx| (tx, None))
+                        .ok_or_else(|| "missing tx".to_string())
+                })
+                .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
+
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         // GET /block-index/:hash
         (&Method::GET, Some(&"block-index"), Some(hash), None, None, None) => {
