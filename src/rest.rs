@@ -1032,6 +1032,7 @@ fn handle_request(
                 .map(|addr| {
                     let addr_copy = addr.clone();
                     let addr_ref = addr.as_ref();
+                    debug!("Address reference: {}", addr_ref);
                     return (
                         addr_copy,
                         to_scripthash(&script_type, addr_ref, &config.network_type),
