@@ -1025,21 +1025,16 @@ fn handle_request(
         // GET /multiaddr/:multiaddr
         (&Method::GET, Some(&"multiaddr"), Some(multiaddr), None, None, None) => {
             let addresses = xpub_multi_or_single(multiaddr);
-            let script_type = "";
 
             let stats: Vec<AddressInfo> = addresses
                 .into_iter()
                 .map(|addr| {
-                    let addr_copy = addr.clone();
                     let addr_ref = addr.as_ref();
-                    debug!("Address reference: {}", addr_ref);
-                    return (
-                        addr_copy,
-                        to_scripthash(&script_type, addr_ref, &config.network_type),
-                    );
+                    let result = to_scripthash("address", addr_ref, &config.network_type);
+                    return (addr, result);
                 })
-                .filter_map(|(addr, hash)| match hash {
-                    Ok(h) => Some((addr, h)),
+                .filter_map(|(addr, result)| match result {
+                    Ok(hash) => Some((addr, hash)),
                     Err(_) => None,
                 })
                 .map(|(addr, hash)| {
