@@ -3,7 +3,7 @@ use std::fmt;
 use std::iter::FromIterator;
 use std::slice;
 
-use bitcoin::hashes::sha256d::Hash as Sha256dHash;
+use bitcoin::hashes::sha256d::{Hash as Sha256dHash, Hash};
 use bitcoin::util::hash::BitcoinHash;
 use time;
 
@@ -352,6 +352,21 @@ pub struct BlockInfo {
 impl BlockInfo {
     pub fn new(block: BlockValue, transactions: Vec<TransactionValue>) -> BlockInfo {
         BlockInfo {
+            block,
+            transactions,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BlockHashInfo {
+    pub block: String,
+    pub transactions: Vec<Hash>,
+}
+
+impl BlockHashInfo {
+    pub fn new(block: String, transactions: Vec<Hash>) -> BlockHashInfo {
+        BlockHashInfo {
             block,
             transactions,
         }

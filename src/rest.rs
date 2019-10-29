@@ -4,7 +4,7 @@ use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, AddressInfo, BlockHeaderMeta, BlockId, BlockInfo, FullHash,
+    script_to_address, AddressInfo, BlockHashInfo, BlockHeaderMeta, BlockId, BlockInfo, FullHash,
     TransactionStatus,
 };
 
@@ -12,9 +12,9 @@ use crate::util::{
 use bitcoin::consensus::encode;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256d::Hash as Sha256dHash, Error as HashError};
-use bitcoin::{BitcoinHash, Script};
 use bitcoin::network::constants::Network::Bitcoin;
 use bitcoin::util::bip32::{DerivationPath, ExtendedPubKey};
+use bitcoin::{BitcoinHash, Script};
 use futures::sync::oneshot;
 use hex::{self, FromHexError};
 use hyper::rt::{self, Future, Stream};
@@ -31,13 +31,13 @@ use {
 
 use serde::Serialize;
 use serde_json;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::num::ParseIntError;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
-use std::borrow::Borrow;
 
 const CHAIN_TXS_PER_PAGE: usize = 50;
 const MAX_MEMPOOL_TXS: usize = 50;
@@ -570,11 +570,15 @@ fn handle_request(
         path.get(4),
     ) {
         // GET /blocks/tip/hash
-        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
-            StatusCode::OK,
-            query.chain().best_hash().to_hex(),
-            TTL_SHORT,
-        ),
+        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => {
+            let hash = query.chain().best_hash();
+            let txids = query
+                .chain()
+                .get_block_txids(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            json_response(BlockHashInfo::new(hash.to_hex(), txids), TTL_SHORT)
+        }
         // GET /blocks/tip/height
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => http_message(
             StatusCode::OK,
@@ -738,27 +742,28 @@ fn handle_request(
             None,
             None,
         ) => {
-            let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
+            let hash = to_scripthash(script_type, script_str, &config.network_type)?;
 
-            let mut txs = vec![];
+            let chain_txs_raw = query
+                .chain()
+                .history(&hash, None, CHAIN_TXS_PER_PAGE)
+                .into_iter()
+                .map(|(tx, blockid)| (tx, Some(blockid)))
+                .collect();
 
-            txs.extend(
-                query
-                    .mempool()
-                    .history(&script_hash[..], MAX_MEMPOOL_TXS)
-                    .into_iter()
-                    .map(|tx| (tx, None)),
-            );
+            let mempool_txs_raw = query
+                .mempool()
+                .history(&hash, MAX_MEMPOOL_TXS)
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
 
-            txs.extend(
-                query
-                    .chain()
-                    .history(&script_hash[..], None, CHAIN_TXS_PER_PAGE)
-                    .into_iter()
-                    .map(|(tx, blockid)| (tx, Some(blockid))),
-            );
+            let chain_txs = prepare_txs(chain_txs_raw, query, config);
+            let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
+            let stats = query.stats(&hash[..]);
+            let addr = script_str.to_string();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(AddressInfo::new(addr, stats, chain_txs, mempool_txs), TTL_SHORT)
         }
         // GET /address/:address/txs/chain[/:last_seen_txid]
         // GET /scripthash/:hash/txs/chain[/:last_seen_txid]
@@ -1027,7 +1032,10 @@ fn handle_request(
                 .map(|addr| {
                     let addr_copy = addr.clone();
                     let addr_ref = addr.as_ref();
-                    return (addr_copy, to_scripthash(&script_type, addr_ref, &config.network_type))
+                    return (
+                        addr_copy,
+                        to_scripthash(&script_type, addr_ref, &config.network_type),
+                    );
                 })
                 .filter_map(|(addr, hash)| match hash {
                     Ok(h) => Some((addr, h)),
