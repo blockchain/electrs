@@ -39,7 +39,7 @@ use std::thread;
 use url::form_urlencoded;
 use std::borrow::Borrow;
 
-const CHAIN_TXS_PER_PAGE: usize = 25;
+const CHAIN_TXS_PER_PAGE: usize = 50;
 const MAX_MEMPOOL_TXS: usize = 50;
 const BLOCK_LIMIT: usize = 10;
 
@@ -972,6 +972,7 @@ fn handle_request(
                 .mempool()
                 .txids()
                 .iter()
+                .take(MAX_MEMPOOL_TXS)
                 .map(|txid| {
                     query
                         .mempool()
@@ -1227,19 +1228,14 @@ fn derive_by_index(input: &str, i: u32, secp: &secp256k1::Secp256k1<secp256k1::A
 }
 
 fn to_scripthash(
-    _script_type: &str,
+    script_type: &str,
     script_str: &str,
     network: &Network,
 ) -> Result<FullHash, HttpError> {
-    let try_addr = address::Address::from_str(script_str);
-
-    match try_addr {
-        Ok(addr) => match addr.address_type() {
-            Some(address::AddressType::P2pkh) => address_to_scripthash(script_str, network),
-            Some(address::AddressType::P2sh) => parse_scripthash(script_str),
-            _ => bail!("Invalid address or scripthash".to_string()),
-        },
-        Err(_) => bail!("Invalid address or scripthash".to_string()),
+    match script_type {
+        "address" => address_to_scripthash(script_str, network),
+        "scripthash" => parse_scripthash(script_str),
+        _ => bail!("Invalid script type".to_string()),
     }
 }
 
