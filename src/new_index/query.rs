@@ -83,10 +83,12 @@ impl Query {
     }
 
     pub fn stats(&self, scripthash: &[u8]) -> (ScriptStats, ScriptStats) {
-        (
-            self.chain.stats(scripthash),
-            self.mempool().stats(scripthash),
-        )
+        debug!("Fetching chain stats...");
+        let chain_stats = self.chain.stats(scripthash);
+        debug!("Fetching mempool stats...");
+        let mempool_stats = self.mempool().stats(scripthash);
+
+        return (chain_stats, mempool_stats)
     }
 
     pub fn lookup_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {

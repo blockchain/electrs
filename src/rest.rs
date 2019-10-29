@@ -1230,7 +1230,7 @@ fn derive_by_index(input: &str, i: u32, secp: &secp256k1::Secp256k1<secp256k1::A
 
     let xpub = ExtendedPubKey::from_str(input).unwrap();
     let child = xpub.derive_pub(secp, &derivation).unwrap();
-    return address::Address::p2wpkh(child.public_key.borrow(), Bitcoin).to_string();
+    return address::Address::p2pkh(child.public_key.borrow(), Bitcoin).to_string();
 }
 
 fn to_scripthash(

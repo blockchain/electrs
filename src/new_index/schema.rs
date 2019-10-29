@@ -299,6 +299,7 @@ impl ChainQuery {
     }
 
     fn start_timer(&self, name: &str) -> HistogramTimer {
+        debug!("Starting timer {}", name);
         self.duration.with_label_values(&[name]).start_timer()
     }
 
@@ -497,6 +498,7 @@ impl ChainQuery {
 
         // get the last known stats and the blockhash they are updated for.
         // invalidates the cache if the block was orphaned.
+        debug!("Getting last known stats from cache...");
         let cache: Option<(ScriptStats, usize)> = self
             .store
             .cache_db
@@ -508,12 +510,14 @@ impl ChainQuery {
             });
 
         // update stats with new transactions since
+        debug!("Updating stats with new txs...");
         let (newstats, lastblock) = cache.map_or_else(
             || self.stats_delta(scripthash, ScriptStats::default(), 0),
             |(oldstats, blockheight)| self.stats_delta(scripthash, oldstats, blockheight + 1),
         );
 
         // save updated stats to cache
+        debug!("Saving updated stats to cache...");
         if let Some(lastblock) = lastblock {
             if newstats.funded_txo_count + newstats.spent_txo_count > MIN_HISTORY_ITEMS_TO_CACHE {
                 self.store.cache_db.write(
@@ -533,6 +537,8 @@ impl ChainQuery {
         start_height: usize,
     ) -> (ScriptStats, Option<Sha256dHash>) {
         let _timer = self.start_timer("stats_delta"); // TODO: measure also the number of txns processed.
+
+        debug!("Performing history iter scan...");
         let history_iter = self
             .history_iter_scan(b'H', scripthash, start_height)
             .map(TxHistoryRow::from_row)
