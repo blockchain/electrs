@@ -1202,11 +1202,13 @@ fn blocks(query: &Query, start_height: Option<usize>) -> Result<Response<Body>, 
 
 fn xpub_multi_or_single(input: &str) -> Vec<String> {
     if input.starts_with(XPUB_PREFIX) {
+        debug!("xpub input found");
         let secp = Secp256k1::new();
         return (0..DERIVE_MAX)
             .map(|i| derive_by_index(input, i, &secp))
             .collect();
     } else if input.contains(MULTIADDR_SEPARATOR) {
+        debug!("multiaddr input found");
         return input
             .split(MULTIADDR_SEPARATOR)
             .into_iter()
