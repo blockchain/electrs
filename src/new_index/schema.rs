@@ -133,6 +133,10 @@ impl ScriptStats {
             spent_txo_sum: 0,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        return &self.tx_count == &std::usize::MIN
+    }
 }
 
 pub struct Indexer {
