@@ -1321,6 +1321,7 @@ fn derive_batch(input: ExtendedPubKey, page: u32, secp: &secp256k1::Secp256k1<se
 }
 
 fn derive_by_index(xpub: ExtendedPubKey, i: u32, secp: &secp256k1::Secp256k1<secp256k1::All>, config: &Config) -> (String, FullHash) {
+    debug!("Deriving address number {}", i);
     let path = format!("m/0/{}", i);
     let path_ref = path.as_ref();
     let derivation = DerivationPath::from_str(path_ref).unwrap();
