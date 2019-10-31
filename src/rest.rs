@@ -1244,7 +1244,7 @@ fn handle_xpub(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<Add
     let mut result: Vec<AddressInfo> = vec![];
     let secp = Secp256k1::new();
 
-    let mut page: u32 = 0;
+    let mut page: u32 = 1;
     let mut is_empty: bool;
     let mut empty_count: u32 = 0;
     let mut done: bool = false;
