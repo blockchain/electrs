@@ -88,7 +88,7 @@ impl Query {
         debug!("Fetching mempool stats...");
         let mempool_stats = self.mempool().stats(scripthash);
 
-        return (chain_stats, mempool_stats)
+        return (chain_stats, mempool_stats);
     }
 
     pub fn lookup_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {

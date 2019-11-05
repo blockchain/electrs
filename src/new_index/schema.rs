@@ -135,7 +135,7 @@ impl ScriptStats {
     }
 
     pub fn is_empty(&self) -> bool {
-        return &self.tx_count == &std::usize::MIN
+        return &self.tx_count == &std::usize::MIN;
     }
 }
 

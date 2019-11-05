@@ -1,10 +1,10 @@
+use bitcoin::network::constants::Network::Bitcoin;
+use bitcoin::util::address;
 use bitcoin::util::bip32::{DerivationPath, ExtendedPubKey};
 use secp256k1::{self, Secp256k1};
+use std::borrow::Borrow;
 use std::env;
 use std::str::FromStr;
-use bitcoin::util::address;
-use bitcoin::network::constants::Network::Bitcoin;
-use std::borrow::Borrow;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

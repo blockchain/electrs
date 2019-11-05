@@ -1,26 +1,25 @@
 use crate::chain::{address, Network, OutPoint, Transaction, TxIn, TxOut};
 use crate::config::Config;
 use crate::errors;
+use crate::multi::{xpub_multi_or_single, handle_xpub_full, handle_xpub_utxo, handle_xpub_stats, handle_multiaddr_stats, handle_multiaddr_full, handle_multiaddr_utxo};
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, AddressInfo, BlockHashInfo, BlockHeaderMeta, BlockId, BlockInfo, FullHash,
-    TransactionStatus,
+    script_to_address, AddressInfo, AddressStats, AddressUtxo, BlockHashInfo, BlockHeaderMeta, BlockId,
+    BlockInfo, FullHash, TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
 use bitcoin::consensus::encode;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256d::Hash as Sha256dHash, Error as HashError};
-use bitcoin::network::constants::Network::Bitcoin;
-use bitcoin::util::bip32::{DerivationPath, ExtendedPubKey};
 use bitcoin::{BitcoinHash, Script};
+use bitcoin::util::bip32::ExtendedPubKey;
 use futures::sync::oneshot;
 use hex::{self, FromHexError};
 use hyper::rt::{self, Future, Stream};
 use hyper::service::service_fn;
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use secp256k1::{self, Secp256k1};
 
 #[cfg(feature = "liquid")]
 use {
@@ -31,7 +30,6 @@ use {
 
 use serde::Serialize;
 use serde_json;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::num::ParseIntError;
 use std::str::FromStr;
@@ -39,17 +37,13 @@ use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
 
-const CHAIN_TXS_PER_PAGE: usize = 50;
-const MAX_MEMPOOL_TXS: usize = 50;
+pub(crate) const CHAIN_TXS_PER_PAGE: usize = 50;
+pub(crate) const MAX_MEMPOOL_TXS: usize = 50;
 const BLOCK_LIMIT: usize = 10;
 
 const TTL_LONG: u32 = 157784630; // ttl for static resources (5 years)
 const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
-
-const MULTIADDR_SEPARATOR: &str = "%7C";
-const DERIVE_SIZE: u32 = 100;
-const XPUB_PREFIX: &str = "xpub";
 
 #[derive(Serialize, Deserialize)]
 pub struct BlockValue {
@@ -356,7 +350,7 @@ impl TxOutValue {
 }
 
 #[derive(Serialize)]
-struct UtxoValue {
+pub struct UtxoValue {
     txid: Sha256dHash,
     vout: u32,
     status: TransactionStatus,
@@ -455,7 +449,7 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     })
 }
 
-fn prepare_txs(
+pub fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
     config: &Config,
@@ -711,18 +705,26 @@ fn handle_request(
         }
         // GET /address/:address
         // GET /scripthash/:hash
-        (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
-        | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
-            let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
-            let stats = query.stats(&script_hash[..]);
-            json_response(
-                json!({
-                    *script_type: script_str,
-                    "chain_stats": stats.0,
-                    "mempool_stats": stats.1,
-                }),
-                TTL_SHORT,
-            )
+        (&Method::GET, Some(_script_type @ &"address"), Some(script_str), None, None, None)
+        | (&Method::GET, Some(_script_type @ &"scripthash"), Some(script_str), None, None, None) => {
+            let (addresses, is_xpub) = xpub_multi_or_single(script_str);
+
+            match is_xpub {
+                true => {
+                    let xpub = ExtendedPubKey::from_str(script_str);
+                    match xpub {
+                        Ok(xpub) => {
+                            let response: Vec<AddressStats> = handle_xpub_stats(xpub, query, config);
+                            json_response(json!(response), TTL_SHORT)
+                        }
+                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
+                    }
+                }
+                _ => {
+                    let response: Vec<AddressStats> = handle_multiaddr_stats(addresses, query, config);
+                    json_response(json!(response), TTL_SHORT)
+                }
+            }
         }
         // GET /address/:address/txs
         // GET /scripthash/:hash/txs
@@ -763,7 +765,10 @@ fn handle_request(
             let stats = query.stats(&hash[..]);
             let addr = script_str.to_string();
 
-            json_response(AddressInfo::new(addr, stats, chain_txs, mempool_txs), TTL_SHORT)
+            json_response(
+                AddressInfo::new(addr, stats, chain_txs, mempool_txs),
+                TTL_SHORT,
+            )
         }
         // GET /address/:address/txs/chain[/:last_seen_txid]
         // GET /scripthash/:hash/txs/chain[/:last_seen_txid]
@@ -832,7 +837,7 @@ fn handle_request(
         // GET /scripthash/:hash/utxo
         (
             &Method::GET,
-            Some(script_type @ &"address"),
+            Some(_script_type @ &"address"),
             Some(script_str),
             Some(&"utxo"),
             None,
@@ -840,20 +845,30 @@ fn handle_request(
         )
         | (
             &Method::GET,
-            Some(script_type @ &"scripthash"),
+            Some(_script_type @ &"scripthash"),
             Some(script_str),
             Some(&"utxo"),
             None,
             None,
         ) => {
-            let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
-            let utxos: Vec<UtxoValue> = query
-                .utxo(&script_hash[..])
-                .into_iter()
-                .map(UtxoValue::from)
-                .collect();
-            // XXX paging?
-            json_response(utxos, TTL_SHORT)
+            let (addresses, is_xpub) = xpub_multi_or_single(script_str);
+
+            match is_xpub {
+                true => {
+                    let xpub = ExtendedPubKey::from_str(script_str);
+                    match xpub {
+                        Ok(xpub) => {
+                            let response: Vec<AddressUtxo> = handle_xpub_utxo(xpub, query, config);
+                            json_response(json!(response), TTL_SHORT)
+                        }
+                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
+                    }
+                }
+                _ => {
+                    let response: Vec<AddressUtxo> = handle_multiaddr_utxo(addresses, query, config);
+                    json_response(json!(response), TTL_SHORT)
+                }
+            }
         }
         // GET /tx/:txid
         (&Method::GET, Some(&"tx"), Some(hash), None, None, None) => {
@@ -1031,14 +1046,15 @@ fn handle_request(
                     let xpub = ExtendedPubKey::from_str(input);
                     match xpub {
                         Ok(xpub) => {
-                            let response: Vec<AddressInfo> = handle_xpub(xpub, query, config);
+                            let response: Vec<AddressInfo> = handle_xpub_full(xpub, query, config);
                             json_response(json!(response), TTL_SHORT)
                         }
-                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e)))
+                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
                     }
                 }
                 _ => {
-                    let response: Vec<AddressInfo> = handle_multiaddr(addresses, query, config);
+                    let response: Vec<AddressInfo> =
+                        handle_multiaddr_full(addresses, query, config);
                     json_response(json!(response), TTL_SHORT)
                 }
             }
@@ -1185,156 +1201,7 @@ fn blocks(query: &Query, start_height: Option<usize>) -> Result<Response<Body>, 
     json_response(values, TTL_SHORT)
 }
 
-fn xpub_multi_or_single(input: &str) -> (Vec<String>, bool) {
-    if input.starts_with(XPUB_PREFIX) {
-        // Return empty vector, addresses will be derived in `handle_xpub()`
-        return (vec![], true)
-    } else if input.contains(MULTIADDR_SEPARATOR) {
-        // Return mutliple addresses
-        let addresses = input
-            .split(MULTIADDR_SEPARATOR)
-            .into_iter()
-            .map(|i| i.to_owned())
-            .collect();
-        return (addresses, false)
-    }
-
-    // Return single address
-    return (vec![input.to_owned()], false);
-}
-
-fn handle_multiaddr(addresses: Vec<String>, query: &Query, config: &Config) -> Vec<AddressInfo> {
-    return addresses
-        .into_iter()
-        .map(|addr| {
-            let addr_ref = addr.as_ref();
-            let result = to_scripthash("address", addr_ref, &config.network_type);
-            return (addr, result);
-        })
-        .filter_map(|(addr, result)| match result {
-            Ok(hash) => Some((addr, hash)),
-            Err(_) => None,
-        })
-        .map(|(addr, hash)| {
-            let chain_txs_raw = query
-                .chain()
-                .history(&hash, None, CHAIN_TXS_PER_PAGE)
-                .into_iter()
-                .map(|(tx, blockid)| (tx, Some(blockid)))
-                .collect();
-
-            let mempool_txs_raw = query
-                .mempool()
-                .history(&hash, MAX_MEMPOOL_TXS)
-                .into_iter()
-                .map(|tx| (tx, None))
-                .collect();
-
-            let chain_txs = prepare_txs(chain_txs_raw, query, config);
-            let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
-            let stats = query.stats(&hash[..]);
-
-            return AddressInfo::new(addr, stats, chain_txs, mempool_txs);
-        })
-        .collect()
-}
-
-fn handle_xpub(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<AddressInfo> {
-    // Return first derived 100 xpub
-    let mut result: Vec<AddressInfo> = vec![];
-    let secp = Secp256k1::new();
-
-    let mut page: u32 = 1;
-    let mut is_empty: bool;
-    let mut empty_count: u32 = 0;
-    let mut done: bool = false;
-
-    loop {
-        debug!("Deriving batch number {}", page);
-        let addresses = derive_batch(input, page, &secp, &config);
-
-        for (addr, hash) in addresses {
-            // Grab stats to check if unused address
-            let stats = query.stats(&hash[..]);
-            if stats.0.is_empty() && stats.1.is_empty() {
-                debug!("Address {} is unused", addr);
-                is_empty = true;
-                empty_count += 1;
-            } else {
-                debug!("Address {} is used", addr);
-                is_empty = false;
-                empty_count = 0;
-            }
-
-            // Grab transactions for used address
-            if !is_empty {
-                let chain_txs_raw = query
-                    .chain()
-                    .history(&hash, None, CHAIN_TXS_PER_PAGE)
-                    .into_iter()
-                    .map(|(tx, blockid)| (tx, Some(blockid)))
-                    .collect();
-
-                let mempool_txs_raw = query
-                    .mempool()
-                    .history(&hash, MAX_MEMPOOL_TXS)
-                    .into_iter()
-                    .map(|tx| (tx, None))
-                    .collect();
-
-                let chain_txs = prepare_txs(chain_txs_raw, query, config);
-                let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
-                result.push(AddressInfo::new(addr, stats, chain_txs, mempool_txs));
-            }
-
-            // Stop if chain of 20 unused addresses found
-            if is_empty && empty_count >= 20 {
-                debug!("Chain of 20 unused addresses found, stopping scan...");
-                done = true;
-                break
-            }
-        }
-
-        page += 1;
-
-        if done {
-            break
-        }
-    }
-
-    return result;
-}
-
-fn derive_batch(input: ExtendedPubKey, page: u32, secp: &secp256k1::Secp256k1<secp256k1::All>, config: &Config) -> Vec<(String, FullHash)> {
-    // Page 1: 0-99
-    // Page 2: 100-199
-    // Page 3: 200-299
-    // ..
-    let from: u32 = (page - 1) * DERIVE_SIZE;
-    let to: u32 = (page * DERIVE_SIZE) - 1;
-
-    let addresses: Vec<(String, FullHash)> = (from..to)
-        .map(|i| derive_by_index(input, i, &secp, config))
-        .collect();
-
-    return addresses
-}
-
-fn derive_by_index(xpub: ExtendedPubKey, i: u32, secp: &secp256k1::Secp256k1<secp256k1::All>, config: &Config) -> (String, FullHash) {
-    debug!("Deriving address number {}", i);
-    let path = format!("m/0/{}", i);
-    let path_ref = path.as_ref();
-    let derivation = DerivationPath::from_str(path_ref).unwrap();
-
-    let child = xpub.derive_pub(secp, &derivation).unwrap();
-    let p2pkh = address::Address::p2pkh(child.public_key.borrow(), Bitcoin);
-    let address = p2pkh.to_string();
-
-    let hash = to_scripthash("address", address.as_str(), &config.network_type);
-    return (address, hash.unwrap());
-}
-
-fn to_scripthash(
+pub(crate) fn to_scripthash(
     script_type: &str,
     script_str: &str,
     network: &Network,
@@ -1377,7 +1244,7 @@ fn parse_scripthash(scripthash: &str) -> Result<FullHash, HttpError> {
 }
 
 #[derive(Debug)]
-struct HttpError(StatusCode, String);
+pub struct HttpError(StatusCode, String);
 
 impl HttpError {
     fn not_found(msg: String) -> Self {

@@ -15,7 +15,7 @@ use elements::encode::serialize;
 use crate::chain::{Block, BlockHeader};
 use crate::errors::*;
 use crate::new_index::{BlockEntry, ScriptStats};
-use crate::rest::{BlockValue, TransactionValue};
+use crate::rest::{BlockValue, TransactionValue, UtxoValue};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockId {
@@ -317,7 +317,7 @@ impl BlockMeta {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct AddressInfo {
     pub address: String,
     pub chain_txs: Vec<TransactionValue>,
@@ -343,7 +343,39 @@ impl AddressInfo {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
+pub struct AddressStats {
+    pub address: String,
+    pub chain_stats: ScriptStats,
+    pub mempool_stats: ScriptStats,
+}
+
+impl AddressStats {
+    pub fn new(
+        address: String,
+        stats: (ScriptStats, ScriptStats),
+    ) -> AddressStats {
+        AddressStats {
+            address,
+            chain_stats: stats.0,
+            mempool_stats: stats.1,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct AddressUtxo {
+    pub address: String,
+    pub utxo: Vec<UtxoValue>,
+}
+
+impl AddressUtxo {
+    pub fn new(address: String, utxo: Vec<UtxoValue>) -> AddressUtxo {
+        AddressUtxo { address, utxo }
+    }
+}
+
+#[derive(Serialize)]
 pub struct BlockInfo {
     pub block: BlockValue,
     pub transactions: Vec<TransactionValue>,
@@ -358,7 +390,7 @@ impl BlockInfo {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct BlockHashInfo {
     pub block: String,
     pub transactions: Vec<Hash>,

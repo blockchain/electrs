@@ -50,6 +50,7 @@ pub mod daemon;
 pub mod electrum;
 pub mod errors;
 pub mod metrics;
+pub mod multi;
 pub mod new_index;
 pub mod rest;
 pub mod signal;
