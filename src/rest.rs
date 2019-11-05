@@ -1,20 +1,23 @@
 use crate::chain::{address, Network, OutPoint, Transaction, TxIn, TxOut};
 use crate::config::Config;
 use crate::errors;
-use crate::multi::{xpub_multi_or_single, handle_xpub_full, handle_xpub_utxo, handle_xpub_stats, handle_multiaddr_stats, handle_multiaddr_full, handle_multiaddr_utxo};
+use crate::multi::{
+    handle_multiaddr_info, handle_multiaddr_stats, handle_multiaddr_utxo, handle_xpub_info,
+    handle_xpub_stats, handle_xpub_utxo, xpub_multi_or_single,
+};
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, AddressInfo, AddressStats, AddressUtxo, BlockHashInfo, BlockHeaderMeta, BlockId,
-    BlockInfo, FullHash, TransactionStatus,
+    script_to_address, AddressInfo, BlockHashInfo, BlockHeaderMeta, BlockId, BlockInfo, FullHash,
+    TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
 use bitcoin::consensus::encode;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256d::Hash as Sha256dHash, Error as HashError};
-use bitcoin::{BitcoinHash, Script};
 use bitcoin::util::bip32::ExtendedPubKey;
+use bitcoin::{BitcoinHash, Script};
 use futures::sync::oneshot;
 use hex::{self, FromHexError};
 use hyper::rt::{self, Future, Stream};
@@ -714,14 +717,15 @@ fn handle_request(
                     let xpub = ExtendedPubKey::from_str(script_str);
                     match xpub {
                         Ok(xpub) => {
-                            let response: Vec<AddressStats> = handle_xpub_stats(xpub, query, config);
+                            let response: Vec<AddressInfo> = handle_xpub_stats(xpub, query, config);
                             json_response(json!(response), TTL_SHORT)
                         }
                         Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
                     }
                 }
                 _ => {
-                    let response: Vec<AddressStats> = handle_multiaddr_stats(addresses, query, config);
+                    let response: Vec<AddressInfo> =
+                        handle_multiaddr_stats(addresses, query, config);
                     json_response(json!(response), TTL_SHORT)
                 }
             }
@@ -858,14 +862,15 @@ fn handle_request(
                     let xpub = ExtendedPubKey::from_str(script_str);
                     match xpub {
                         Ok(xpub) => {
-                            let response: Vec<AddressUtxo> = handle_xpub_utxo(xpub, query, config);
+                            let response: Vec<AddressInfo> = handle_xpub_utxo(xpub, query, config);
                             json_response(json!(response), TTL_SHORT)
                         }
                         Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
                     }
                 }
                 _ => {
-                    let response: Vec<AddressUtxo> = handle_multiaddr_utxo(addresses, query, config);
+                    let response: Vec<AddressInfo> =
+                        handle_multiaddr_utxo(addresses, query, config);
                     json_response(json!(response), TTL_SHORT)
                 }
             }
@@ -1046,7 +1051,7 @@ fn handle_request(
                     let xpub = ExtendedPubKey::from_str(input);
                     match xpub {
                         Ok(xpub) => {
-                            let response: Vec<AddressInfo> = handle_xpub_full(xpub, query, config);
+                            let response: Vec<AddressInfo> = handle_xpub_info(xpub, query, config);
                             json_response(json!(response), TTL_SHORT)
                         }
                         Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
@@ -1054,7 +1059,7 @@ fn handle_request(
                 }
                 _ => {
                     let response: Vec<AddressInfo> =
-                        handle_multiaddr_full(addresses, query, config);
+                        handle_multiaddr_info(addresses, query, config);
                     json_response(json!(response), TTL_SHORT)
                 }
             }

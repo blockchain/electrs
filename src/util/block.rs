@@ -320,10 +320,16 @@ impl BlockMeta {
 #[derive(Serialize)]
 pub struct AddressInfo {
     pub address: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub chain_stats: Option<ScriptStats>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mempool_stats: Option<ScriptStats>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub utxo: Vec<UtxoValue>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub chain_txs: Vec<TransactionValue>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub mempool_txs: Vec<TransactionValue>,
-    pub chain_stats: ScriptStats,
-    pub mempool_stats: ScriptStats,
 }
 
 impl AddressInfo {
@@ -335,43 +341,34 @@ impl AddressInfo {
     ) -> AddressInfo {
         AddressInfo {
             address,
+            chain_stats: Some(stats.0),
+            mempool_stats: Some(stats.1),
+            utxo: vec![],
             chain_txs,
             mempool_txs,
-            chain_stats: stats.0,
-            mempool_stats: stats.1,
         }
     }
-}
 
-#[derive(Serialize)]
-pub struct AddressStats {
-    pub address: String,
-    pub chain_stats: ScriptStats,
-    pub mempool_stats: ScriptStats,
-}
-
-impl AddressStats {
-    pub fn new(
-        address: String,
-        stats: (ScriptStats, ScriptStats),
-    ) -> AddressStats {
-        AddressStats {
+    pub fn new_stats(address: String, stats: (ScriptStats, ScriptStats)) -> AddressInfo {
+        AddressInfo {
             address,
-            chain_stats: stats.0,
-            mempool_stats: stats.1,
+            utxo: vec![],
+            chain_stats: Some(stats.0),
+            mempool_stats: Some(stats.1),
+            chain_txs: vec![],
+            mempool_txs: vec![],
         }
     }
-}
 
-#[derive(Serialize)]
-pub struct AddressUtxo {
-    pub address: String,
-    pub utxo: Vec<UtxoValue>,
-}
-
-impl AddressUtxo {
-    pub fn new(address: String, utxo: Vec<UtxoValue>) -> AddressUtxo {
-        AddressUtxo { address, utxo }
+    pub fn new_utxo(address: String, utxos: Vec<UtxoValue>) -> AddressInfo {
+        AddressInfo {
+            address,
+            utxo: utxos,
+            chain_stats: None,
+            mempool_stats: None,
+            chain_txs: vec![],
+            mempool_txs: vec![],
+        }
     }
 }
 

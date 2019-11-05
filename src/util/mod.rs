@@ -6,8 +6,8 @@ mod transaction;
 pub mod fees;
 
 pub use self::block::{
-    AddressInfo, AddressStats, AddressUtxo, BlockHashInfo, BlockHeaderMeta, BlockId, BlockInfo, BlockMeta,
-    BlockStatus, HeaderEntry, HeaderList,
+    AddressInfo, BlockHashInfo, BlockHeaderMeta, BlockId, BlockInfo, BlockMeta, BlockStatus,
+    HeaderEntry, HeaderList,
 };
 pub use self::merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 pub use self::script::{get_innerscripts, get_script_asm, script_to_address};

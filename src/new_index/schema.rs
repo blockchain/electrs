@@ -303,7 +303,6 @@ impl ChainQuery {
     }
 
     fn start_timer(&self, name: &str) -> HistogramTimer {
-        debug!("Starting timer {}", name);
         self.duration.with_label_values(&[name]).start_timer()
     }
 

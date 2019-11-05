@@ -1,8 +1,8 @@
 use crate::chain::address;
 use crate::config::Config;
 use crate::new_index::{Query, ScriptStats};
-use crate::rest::{prepare_txs, to_scripthash, CHAIN_TXS_PER_PAGE, MAX_MEMPOOL_TXS, UtxoValue};
-use crate::util::{AddressInfo, AddressStats, AddressUtxo, FullHash};
+use crate::rest::{prepare_txs, to_scripthash, UtxoValue, CHAIN_TXS_PER_PAGE, MAX_MEMPOOL_TXS};
+use crate::util::{AddressInfo, FullHash};
 
 use bitcoin::network::constants::Network::Bitcoin;
 use bitcoin::util::bip32::{DerivationPath, ExtendedPubKey};
@@ -71,41 +71,77 @@ fn derive_by_index(
     return (address, hash.unwrap());
 }
 
-fn get_address_info(addr: String, hash: FullHash, stats: (ScriptStats, ScriptStats), query: &Query, config: &Config) -> AddressInfo {
-    let chain_txs_raw = query
-        .chain()
-        .history(&hash, None, CHAIN_TXS_PER_PAGE)
-        .into_iter()
-        .map(|(tx, blockid)| (tx, Some(blockid)))
-        .collect();
-
-    let mempool_txs_raw = query
-        .mempool()
-        .history(&hash, MAX_MEMPOOL_TXS)
-        .into_iter()
-        .map(|tx| (tx, None))
-        .collect();
-
-    let chain_txs = prepare_txs(chain_txs_raw, query, config);
-    let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
-    return AddressInfo::new(addr, stats, chain_txs, mempool_txs);
+pub fn handle_xpub_info(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<AddressInfo> {
+    return handle_xpub_inner(input, query, config, get_address_info);
 }
 
-fn get_address_stats(addr: String, stats: (ScriptStats, ScriptStats)) -> AddressStats {
-    return AddressStats::new(addr, stats);
+pub fn handle_xpub_stats(
+    input: ExtendedPubKey,
+    query: &Query,
+    config: &Config,
+) -> Vec<AddressInfo> {
+    return handle_xpub_inner(input, query, config, get_address_stats);
 }
 
-fn get_address_utxo(addr: String, hash: FullHash, query: &Query) -> AddressUtxo {
-    let utxos: Vec<UtxoValue> = query
-        .utxo(&hash[..])
+pub fn handle_xpub_utxo(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<AddressInfo> {
+    return handle_xpub_inner(input, query, config, get_address_utxo);
+}
+
+pub fn handle_multiaddr_info(
+    addresses: Vec<String>,
+    query: &Query,
+    config: &Config,
+) -> Vec<AddressInfo> {
+    return handle_multiaddr_inner(addresses, query, config, get_address_info);
+}
+
+pub fn handle_multiaddr_stats(
+    addresses: Vec<String>,
+    query: &Query,
+    config: &Config,
+) -> Vec<AddressInfo> {
+    return handle_multiaddr_inner(addresses, query, config, get_address_stats);
+}
+
+pub fn handle_multiaddr_utxo(
+    addresses: Vec<String>,
+    query: &Query,
+    config: &Config,
+) -> Vec<AddressInfo> {
+    return handle_multiaddr_inner(addresses, query, config, get_address_utxo);
+}
+
+fn handle_multiaddr_inner(
+    addresses: Vec<String>,
+    query: &Query,
+    config: &Config,
+    callback: fn(String, FullHash, (ScriptStats, ScriptStats), &Query, &Config) -> AddressInfo,
+) -> Vec<AddressInfo> {
+    return addresses
         .into_iter()
-        .map(UtxoValue::from)
+        .map(|addr| {
+            let addr_ref = addr.as_ref();
+            let result = to_scripthash("address", addr_ref, &config.network_type);
+            return (addr, result);
+        })
+        .filter_map(|(addr, result)| match result {
+            Ok(hash) => Some((addr, hash)),
+            Err(_) => None,
+        })
+        .map(|(addr, hash)| {
+            let stats = query.stats(&hash[..]);
+            let data = callback(addr, hash, stats, query, config);
+            return data;
+        })
         .collect();
-
-    return AddressUtxo::new(addr, utxos);
 }
 
-pub fn handle_xpub_full(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<AddressInfo> {
+fn handle_xpub_inner(
+    input: ExtendedPubKey,
+    query: &Query,
+    config: &Config,
+    callback: fn(String, FullHash, (ScriptStats, ScriptStats), &Query, &Config) -> AddressInfo,
+) -> Vec<AddressInfo> {
     // Return first derived 100 xpub
     let mut result: Vec<AddressInfo> = vec![];
     let secp = Secp256k1::new();
@@ -134,7 +170,7 @@ pub fn handle_xpub_full(input: ExtendedPubKey, query: &Query, config: &Config) -
 
             // Grab transactions for used address
             if !is_empty {
-                let data = get_address_info(addr, hash, stats, query, config);
+                let data = callback(addr, hash, stats, query, config);
                 result.push(data);
             }
 
@@ -156,175 +192,54 @@ pub fn handle_xpub_full(input: ExtendedPubKey, query: &Query, config: &Config) -
     return result;
 }
 
-pub fn handle_xpub_stats(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<AddressStats> {
-    // Return first derived 100 xpub
-    let mut result: Vec<AddressStats> = vec![];
-    let secp = Secp256k1::new();
-
-    let mut page: u32 = 1;
-    let mut is_empty: bool;
-    let mut empty_count: u32 = 0;
-    let mut done: bool = false;
-
-    loop {
-        debug!("Deriving batch number {}", page);
-        let addresses = derive_batch(input, page, &secp, &config);
-
-        for (addr, hash) in addresses {
-            // Grab stats to check if unused address
-            let stats = query.stats(&hash[..]);
-            if stats.0.is_empty() && stats.1.is_empty() {
-                debug!("Address {} is unused", addr);
-                is_empty = true;
-                empty_count += 1;
-            } else {
-                debug!("Address {} is used", addr);
-                is_empty = false;
-                empty_count = 0;
-            }
-
-            // Grab transactions for used address
-            if !is_empty {
-                let data = get_address_stats(addr, stats);
-                result.push(data);
-            }
-
-            // Stop if chain of 20 unused addresses found
-            if is_empty && empty_count >= 20 {
-                debug!("Chain of 20 unused addresses found, stopping scan...");
-                done = true;
-                break;
-            }
-        }
-
-        page += 1;
-
-        if done {
-            break;
-        }
-    }
-
-    return result;
-}
-
-pub fn handle_xpub_utxo(input: ExtendedPubKey, query: &Query, config: &Config) -> Vec<AddressUtxo> {
-    // Return first derived 100 xpub
-    let mut result: Vec<AddressUtxo> = vec![];
-    let secp = Secp256k1::new();
-
-    let mut page: u32 = 1;
-    let mut is_empty: bool;
-    let mut empty_count: u32 = 0;
-    let mut done: bool = false;
-
-    loop {
-        debug!("Deriving batch number {}", page);
-        let addresses = derive_batch(input, page, &secp, &config);
-
-        for (addr, hash) in addresses {
-            // Grab stats to check if unused address
-            let stats = query.stats(&hash[..]);
-            if stats.0.is_empty() && stats.1.is_empty() {
-                debug!("Address {} is unused", addr);
-                is_empty = true;
-                empty_count += 1;
-            } else {
-                debug!("Address {} is used", addr);
-                is_empty = false;
-                empty_count = 0;
-            }
-
-            // Grab transactions for used address
-            if !is_empty {
-                let data = get_address_utxo(addr, hash, query);
-                result.push(data);
-            }
-
-            // Stop if chain of 20 unused addresses found
-            if is_empty && empty_count >= 20 {
-                debug!("Chain of 20 unused addresses found, stopping scan...");
-                done = true;
-                break;
-            }
-        }
-
-        page += 1;
-
-        if done {
-            break;
-        }
-    }
-
-    return result;
-}
-
-pub fn handle_multiaddr_full(
-    addresses: Vec<String>,
+fn get_address_info(
+    addr: String,
+    hash: FullHash,
+    stats: (ScriptStats, ScriptStats),
     query: &Query,
     config: &Config,
-) -> Vec<AddressInfo> {
-    return addresses
+) -> AddressInfo {
+    let chain_txs_raw = query
+        .chain()
+        .history(&hash, None, CHAIN_TXS_PER_PAGE)
         .into_iter()
-        .map(|addr| {
-            let addr_ref = addr.as_ref();
-            let result = to_scripthash("address", addr_ref, &config.network_type);
-            return (addr, result);
-        })
-        .filter_map(|(addr, result)| match result {
-            Ok(hash) => Some((addr, hash)),
-            Err(_) => None,
-        })
-        .map(|(addr, hash)| {
-            let stats = query.stats(&hash[..]);
-            let data = get_address_info(addr, hash, stats, query, config);
-            return data;
-        })
+        .map(|(tx, blockid)| (tx, Some(blockid)))
         .collect();
+
+    let mempool_txs_raw = query
+        .mempool()
+        .history(&hash, MAX_MEMPOOL_TXS)
+        .into_iter()
+        .map(|tx| (tx, None))
+        .collect();
+
+    let chain_txs = prepare_txs(chain_txs_raw, query, config);
+    let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
+    return AddressInfo::new(addr, stats, chain_txs, mempool_txs);
 }
 
-pub fn handle_multiaddr_stats(
-    addresses: Vec<String>,
-    query: &Query,
-    config: &Config,
-) -> Vec<AddressStats> {
-    return addresses
-        .into_iter()
-        .map(|addr| {
-            let addr_ref = addr.as_ref();
-            let result = to_scripthash("address", addr_ref, &config.network_type);
-            return (addr, result);
-        })
-        .filter_map(|(addr, result)| match result {
-            Ok(hash) => Some((addr, hash)),
-            Err(_) => None,
-        })
-        .map(|(addr, hash)| {
-            let stats = query.stats(&hash[..]);
-            let data = get_address_stats(addr, stats);
-            return data;
-        })
-        .collect();
+fn get_address_stats(
+    addr: String,
+    _hash: FullHash,
+    stats: (ScriptStats, ScriptStats),
+    _query: &Query,
+    _config: &Config,
+) -> AddressInfo {
+    return AddressInfo::new_stats(addr, stats);
 }
 
-pub fn handle_multiaddr_utxo(
-    addresses: Vec<String>,
+fn get_address_utxo(
+    addr: String,
+    hash: FullHash,
+    _stats: (ScriptStats, ScriptStats),
     query: &Query,
-    config: &Config,
-) -> Vec<AddressUtxo> {
-    return addresses
+    _config: &Config,
+) -> AddressInfo {
+    let utxos: Vec<UtxoValue> = query
+        .utxo(&hash[..])
         .into_iter()
-        .map(|addr| {
-            let addr_ref = addr.as_ref();
-            let result = to_scripthash("address", addr_ref, &config.network_type);
-            return (addr, result);
-        })
-        .filter_map(|(addr, result)| match result {
-            Ok(hash) => Some((addr, hash)),
-            Err(_) => None,
-        })
-        .map(|(addr, hash)| {
-            let data = get_address_utxo(addr, hash, query);
-            return data;
-        })
+        .map(UtxoValue::from)
         .collect();
+
+    return AddressInfo::new_utxo(addr, utxos);
 }
