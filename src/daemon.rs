@@ -19,11 +19,12 @@ use bitcoin::consensus::encode::{deserialize, serialize};
 use elements::encode::{deserialize, serialize};
 
 use crate::chain::{Block, BlockHeader, Network, Transaction};
-use crate::metrics::{HistogramOpts, HistogramVec, Metrics};
+use crate::metrics::{HistogramOpts, HistogramVec, Metrics, MetricOpts};
 use crate::signal::Waiter;
 use crate::util::HeaderList;
 
 use crate::errors::*;
+use prometheus::IntCounterVec;
 
 fn parse_hash(value: &Value) -> Result<Sha256dHash> {
     Ok(Sha256dHash::from_hex(
@@ -294,6 +295,10 @@ pub struct Daemon {
     // monitoring
     latency: HistogramVec,
     size: HistogramVec,
+
+    // rest monitoring
+    pub(crate) rest_latency: HistogramVec,
+    pub(crate) rest_count: IntCounterVec
 }
 
 impl Daemon {
@@ -322,6 +327,14 @@ impl Daemon {
             size: metrics.histogram_vec(
                 HistogramOpts::new("daemon_bytes", "Bitcoind RPC size (in bytes)"),
                 &["method", "dir"],
+            ),
+            rest_latency: metrics.histogram_vec(
+                HistogramOpts::new("rest_latency", "REST requests latency (in seconds)"),
+                &["endpoint"],
+            ),
+            rest_count: metrics.counter_vec(
+                MetricOpts::new("rest_count", "# of requests served"),
+                &["endpoint"],
             ),
         };
         let network_info = daemon.getnetworkinfo()?;
@@ -364,6 +377,8 @@ impl Daemon {
             signal: self.signal.clone(),
             latency: self.latency.clone(),
             size: self.size.clone(),
+            rest_latency: self.rest_latency.clone(),
+            rest_count: self.rest_count.clone(),
         })
     }
 

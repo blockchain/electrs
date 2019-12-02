@@ -568,6 +568,9 @@ fn handle_request(
     ) {
         // GET /blocks/tip/hash
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["latest_block"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["latest_block"]).inc();
+
             let hash = query.chain().best_hash();
             let txids = query
                 .chain()
@@ -577,11 +580,9 @@ fn handle_request(
             json_response(BlockHashInfo::new(hash.to_hex(), txids), TTL_SHORT)
         }
         // GET /blocks/tip/height
-        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => http_message(
-            StatusCode::OK,
-            query.chain().best_height().to_string(),
-            TTL_SHORT,
-        ),
+        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => {
+            http_message(StatusCode::OK, query.chain().best_height().to_string(), TTL_SHORT)
+        },
         // GET /blocks[/:start_height]
         (&Method::GET, Some(&"blocks"), start_height, None, None, None) => {
             let start_height = start_height.and_then(|height| height.parse::<usize>().ok());
@@ -589,6 +590,9 @@ fn handle_request(
         }
         // GET /block-height/:height
         (&Method::GET, Some(&"block-height"), Some(height), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["block_height"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["block_height"]).inc();
+
             let height = height.parse::<usize>()?;
             let header = query
                 .chain()
@@ -710,6 +714,9 @@ fn handle_request(
         // GET /scripthash/:hash
         (&Method::GET, Some(_script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(_script_type @ &"scripthash"), Some(script_str), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["balance"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["balance"]).inc();
+
             let (addresses, is_xpub) = xpub_multi_or_single(script_str);
 
             match is_xpub {
@@ -748,6 +755,9 @@ fn handle_request(
             None,
             None,
         ) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["address"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["address"]).inc();
+
             let hash = to_scripthash(script_type, script_str, &config.network_type)?;
 
             let chain_txs_raw = query
@@ -855,6 +865,9 @@ fn handle_request(
             None,
             None,
         ) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["unspent"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["unspent"]).inc();
+
             let (addresses, is_xpub) = xpub_multi_or_single(script_str);
 
             match is_xpub {
@@ -877,6 +890,9 @@ fn handle_request(
         }
         // GET /tx/:txid
         (&Method::GET, Some(&"tx"), Some(hash), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["tx_index"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["tx_index"]).inc();
+
             let hash = Sha256dHash::from_hex(hash)?;
             let tx = query
                 .lookup_txn(&hash)
@@ -979,6 +995,9 @@ fn handle_request(
         }
         // GET /mempool/txids
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["mempool"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["mempool"]).inc();
+
             json_response(query.mempool().txids(), TTL_SHORT)
         }
         // GET /mempool/recent
@@ -1011,6 +1030,9 @@ fn handle_request(
         }
         // GET /block-index/:hash
         (&Method::GET, Some(&"block-index"), Some(hash), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["block_index"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["block_index"]).inc();
+
             let hash = Sha256dHash::from_hex(hash)?;
             let blockhm = query
                 .chain()
@@ -1044,6 +1066,9 @@ fn handle_request(
         }
         // GET /multiaddr/:multiaddr
         (&Method::GET, Some(&"multiaddr"), Some(input), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["multiaddr"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["multiaddr"]).inc();
+
             let (addresses, is_xpub) = xpub_multi_or_single(input);
 
             match is_xpub {

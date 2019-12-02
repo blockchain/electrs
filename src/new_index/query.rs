@@ -23,7 +23,7 @@ const CONF_TARGETS: [u16; 9] = [
 pub struct Query {
     chain: Arc<ChainQuery>, // TODO: should be used as read-only
     mempool: Arc<RwLock<Mempool>>,
-    daemon: Arc<Daemon>,
+    pub(crate) daemon: Arc<Daemon>,
     cached_estimates: RwLock<Option<(HashMap<u16, f32>, Instant)>>,
 
     #[cfg(feature = "liquid")]
