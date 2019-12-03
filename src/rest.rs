@@ -991,13 +991,12 @@ fn handle_request(
         }
         // GET /mempool
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["mempool"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["mempool"]).inc();
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
         }
         // GET /mempool/txids
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
-            let _timer = query.daemon.rest_latency.with_label_values(&["mempool"]).start_timer();
-            query.daemon.rest_count.with_label_values(&["mempool"]).inc();
-
             json_response(query.mempool().txids(), TTL_SHORT)
         }
         // GET /mempool/recent
