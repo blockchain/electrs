@@ -133,6 +133,10 @@ impl ScriptStats {
             spent_txo_sum: 0,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        return &self.tx_count == &std::usize::MIN;
+    }
 }
 
 pub struct Indexer {
@@ -497,6 +501,7 @@ impl ChainQuery {
 
         // get the last known stats and the blockhash they are updated for.
         // invalidates the cache if the block was orphaned.
+        debug!("Getting last known stats from cache...");
         let cache: Option<(ScriptStats, usize)> = self
             .store
             .cache_db
@@ -508,12 +513,14 @@ impl ChainQuery {
             });
 
         // update stats with new transactions since
+        debug!("Updating stats with new txs...");
         let (newstats, lastblock) = cache.map_or_else(
             || self.stats_delta(scripthash, ScriptStats::default(), 0),
             |(oldstats, blockheight)| self.stats_delta(scripthash, oldstats, blockheight + 1),
         );
 
         // save updated stats to cache
+        debug!("Saving updated stats to cache...");
         if let Some(lastblock) = lastblock {
             if newstats.funded_txo_count + newstats.spent_txo_count > MIN_HISTORY_ITEMS_TO_CACHE {
                 self.store.cache_db.write(
@@ -533,6 +540,8 @@ impl ChainQuery {
         start_height: usize,
     ) -> (ScriptStats, Option<Sha256dHash>) {
         let _timer = self.start_timer("stats_delta"); // TODO: measure also the number of txns processed.
+
+        debug!("Performing history iter scan...");
         let history_iter = self
             .history_iter_scan(b'H', scripthash, start_height)
             .map(TxHistoryRow::from_row)
@@ -771,6 +780,7 @@ fn load_blockhashes(db: &DB, prefix: &[u8]) -> HashSet<Sha256dHash> {
         .collect()
 }
 
+#[allow(dead_code)]
 fn load_blockheaders(db: &DB) -> HashMap<Sha256dHash, BlockHeader> {
     db.iter_scan(&BlockRow::header_filter())
         .map(BlockRow::from_row)

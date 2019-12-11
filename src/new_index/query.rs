@@ -23,7 +23,7 @@ const CONF_TARGETS: [u16; 9] = [
 pub struct Query {
     chain: Arc<ChainQuery>, // TODO: should be used as read-only
     mempool: Arc<RwLock<Mempool>>,
-    daemon: Arc<Daemon>,
+    pub(crate) daemon: Arc<Daemon>,
     cached_estimates: RwLock<Option<(HashMap<u16, f32>, Instant)>>,
 
     #[cfg(feature = "liquid")]
@@ -83,10 +83,12 @@ impl Query {
     }
 
     pub fn stats(&self, scripthash: &[u8]) -> (ScriptStats, ScriptStats) {
-        (
-            self.chain.stats(scripthash),
-            self.mempool().stats(scripthash),
-        )
+        debug!("Fetching chain stats...");
+        let chain_stats = self.chain.stats(scripthash);
+        debug!("Fetching mempool stats...");
+        let mempool_stats = self.mempool().stats(scripthash);
+
+        return (chain_stats, mempool_stats);
     }
 
     pub fn lookup_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {

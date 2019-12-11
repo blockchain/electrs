@@ -1,16 +1,22 @@
 use crate::chain::{address, Network, OutPoint, Transaction, TxIn, TxOut};
 use crate::config::Config;
 use crate::errors;
+use crate::multi::{
+    handle_multiaddr_info, handle_multiaddr_stats, handle_multiaddr_utxo, handle_xpub_info,
+    handle_xpub_stats, handle_xpub_utxo, xpub_multi_or_single,
+};
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     full_hash, get_innerscripts, get_script_asm, get_tx_merkle_proof, has_prevout, is_coinbase,
-    script_to_address, BlockHeaderMeta, BlockId, FullHash, TransactionStatus,
+    script_to_address, AddressInfo, BlockHashInfo, BlockHeaderMeta, BlockId, BlockInfo, FullHash,
+    TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
 use bitcoin::consensus::encode;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256d::Hash as Sha256dHash, Error as HashError};
+use bitcoin::util::bip32::ExtendedPubKey;
 use bitcoin::{BitcoinHash, Script};
 use futures::sync::oneshot;
 use hex::{self, FromHexError};
@@ -34,8 +40,8 @@ use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
 
-const CHAIN_TXS_PER_PAGE: usize = 25;
-const MAX_MEMPOOL_TXS: usize = 50;
+pub(crate) const CHAIN_TXS_PER_PAGE: usize = 50;
+pub(crate) const MAX_MEMPOOL_TXS: usize = 50;
 const BLOCK_LIMIT: usize = 10;
 
 const TTL_LONG: u32 = 157784630; // ttl for static resources (5 years)
@@ -43,7 +49,7 @@ const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
 #[derive(Serialize, Deserialize)]
-struct BlockValue {
+pub struct BlockValue {
     id: String,
     height: u32,
     version: u32,
@@ -92,7 +98,7 @@ impl From<BlockHeaderMeta> for BlockValue {
 }
 
 #[derive(Serialize, Deserialize)]
-struct TransactionValue {
+pub struct TransactionValue {
     txid: Sha256dHash,
     version: u32,
     locktime: u32,
@@ -162,7 +168,7 @@ impl TransactionValue {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct TxInValue {
+pub struct TxInValue {
     txid: Sha256dHash,
     vout: u32,
     prevout: Option<TxOutValue>,
@@ -234,7 +240,7 @@ impl TxInValue {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-struct TxOutValue {
+pub struct TxOutValue {
     scriptpubkey: Script,
     scriptpubkey_asm: String,
     scriptpubkey_type: String,
@@ -347,7 +353,7 @@ impl TxOutValue {
 }
 
 #[derive(Serialize)]
-struct UtxoValue {
+pub struct UtxoValue {
     txid: Sha256dHash,
     vout: u32,
     status: TransactionStatus,
@@ -446,7 +452,7 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     })
 }
 
-fn prepare_txs(
+pub fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
     config: &Config,
@@ -472,7 +478,7 @@ fn prepare_txs(
         .collect()
 }
 
-type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
+type BoxFut = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 
 pub fn run_server(config: Arc<Config>, query: Arc<Query>) -> Handle {
     let addr = &config.http_addr;
@@ -560,31 +566,71 @@ fn handle_request(
         path.get(3),
         path.get(4),
     ) {
-        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
-            StatusCode::OK,
-            query.chain().best_hash().to_hex(),
-            TTL_SHORT,
-        ),
+        // GET /blocks/tip/hash
+        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["latest_block"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["latest_block"]).inc();
 
-        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => http_message(
-            StatusCode::OK,
-            query.chain().best_height().to_string(),
-            TTL_SHORT,
-        ),
+            let hash = query.chain().best_hash();
+            let txids = query
+                .chain()
+                .get_block_txids(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
 
+            json_response(BlockHashInfo::new(hash.to_hex(), txids), TTL_SHORT)
+        }
+        // GET /blocks/tip/height
+        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => {
+            http_message(StatusCode::OK, query.chain().best_height().to_string(), TTL_SHORT)
+        },
+        // GET /blocks[/:start_height]
         (&Method::GET, Some(&"blocks"), start_height, None, None, None) => {
             let start_height = start_height.and_then(|height| height.parse::<usize>().ok());
             blocks(&query, start_height)
         }
+        // GET /block-height/:height
         (&Method::GET, Some(&"block-height"), Some(height), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["block_height"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["block_height"]).inc();
+
             let height = height.parse::<usize>()?;
             let header = query
                 .chain()
                 .header_by_height(height)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let hash = header.hash();
+
+            let blockhm = query
+                .chain()
+                .get_block_with_meta(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+            let block_value = BlockValue::from(blockhm);
+
+            let txids = query
+                .chain()
+                .get_block_txids(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let confirmed_blockid = query.chain().blockid_by_hash(&hash);
+
+            let txs = txids
+                .iter()
+                .take(CHAIN_TXS_PER_PAGE)
+                .map(|txid| {
+                    query
+                        .lookup_txn(&txid)
+                        .map(|tx| (tx, confirmed_blockid.clone()))
+                        .ok_or_else(|| "missing tx".to_string())
+                })
+                .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
+
             let ttl = ttl_by_depth(Some(height), query);
-            http_message(StatusCode::OK, header.hash().to_hex(), ttl)
+            let tx_values = prepare_txs(txs, query, config);
+            let info = BlockInfo::new(block_value, tx_values);
+            json_response(json!(info), ttl)
         }
+        // GET /block/:hash
         (&Method::GET, Some(&"block"), Some(hash), None, None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let blockhm = query
@@ -594,12 +640,14 @@ fn handle_request(
             let block_value = BlockValue::from(blockhm);
             json_response(block_value, TTL_LONG)
         }
+        // GET /block/:hash/status
         (&Method::GET, Some(&"block"), Some(hash), Some(&"status"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let status = query.chain().get_block_status(&hash);
             let ttl = ttl_by_depth(status.height, query);
             json_response(status, ttl)
         }
+        // GET /block/:hash/txids
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txids"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let txids = query
@@ -608,6 +656,7 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
+        // GET /block/:hash/txid/:index
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txid"), Some(index), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let index: usize = index.parse()?;
@@ -620,6 +669,7 @@ fn handle_request(
             }
             http_message(StatusCode::OK, txids[index].to_hex(), TTL_LONG)
         }
+        // GET /block/:hash/txs[/:start_index]
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), start_index, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let txids = query
@@ -660,19 +710,35 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), ttl)
         }
-        (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
-        | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
-            let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
-            let stats = query.stats(&script_hash[..]);
-            json_response(
-                json!({
-                    *script_type: script_str,
-                    "chain_stats": stats.0,
-                    "mempool_stats": stats.1,
-                }),
-                TTL_SHORT,
-            )
+        // GET /address/:address
+        // GET /scripthash/:hash
+        (&Method::GET, Some(_script_type @ &"address"), Some(script_str), None, None, None)
+        | (&Method::GET, Some(_script_type @ &"scripthash"), Some(script_str), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["balance"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["balance"]).inc();
+
+            let (addresses, is_xpub) = xpub_multi_or_single(script_str);
+
+            match is_xpub {
+                true => {
+                    let xpub = ExtendedPubKey::from_str(script_str);
+                    match xpub {
+                        Ok(xpub) => {
+                            let response: Vec<AddressInfo> = handle_xpub_stats(xpub, query, config);
+                            json_response(json!(response), TTL_SHORT)
+                        }
+                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
+                    }
+                }
+                _ => {
+                    let response: Vec<AddressInfo> =
+                        handle_multiaddr_stats(addresses, query, config);
+                    json_response(json!(response), TTL_SHORT)
+                }
+            }
         }
+        // GET /address/:address/txs
+        // GET /scripthash/:hash/txs
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -689,29 +755,37 @@ fn handle_request(
             None,
             None,
         ) => {
-            let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
+            let _timer = query.daemon.rest_latency.with_label_values(&["address"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["address"]).inc();
 
-            let mut txs = vec![];
+            let hash = to_scripthash(script_type, script_str, &config.network_type)?;
 
-            txs.extend(
-                query
-                    .mempool()
-                    .history(&script_hash[..], MAX_MEMPOOL_TXS)
-                    .into_iter()
-                    .map(|tx| (tx, None)),
-            );
+            let chain_txs_raw = query
+                .chain()
+                .history(&hash, None, CHAIN_TXS_PER_PAGE)
+                .into_iter()
+                .map(|(tx, blockid)| (tx, Some(blockid)))
+                .collect();
 
-            txs.extend(
-                query
-                    .chain()
-                    .history(&script_hash[..], None, CHAIN_TXS_PER_PAGE)
-                    .into_iter()
-                    .map(|(tx, blockid)| (tx, Some(blockid))),
-            );
+            let mempool_txs_raw = query
+                .mempool()
+                .history(&hash, MAX_MEMPOOL_TXS)
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            let chain_txs = prepare_txs(chain_txs_raw, query, config);
+            let mempool_txs = prepare_txs(mempool_txs_raw, query, config);
+            let stats = query.stats(&hash[..]);
+            let addr = script_str.to_string();
+
+            json_response(
+                AddressInfo::new(addr, stats, chain_txs, mempool_txs),
+                TTL_SHORT,
+            )
         }
-
+        // GET /address/:address/txs/chain[/:last_seen_txid]
+        // GET /scripthash/:hash/txs/chain[/:last_seen_txid]
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -744,6 +818,8 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
+        // GET /address/:address/txs/mempool
+        // GET /scripthash/:hash/txs/mempool
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -771,10 +847,11 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
-
+        // GET /address/:address/utxo
+        // GET /scripthash/:hash/utxo
         (
             &Method::GET,
-            Some(script_type @ &"address"),
+            Some(_script_type @ &"address"),
             Some(script_str),
             Some(&"utxo"),
             None,
@@ -782,22 +859,40 @@ fn handle_request(
         )
         | (
             &Method::GET,
-            Some(script_type @ &"scripthash"),
+            Some(_script_type @ &"scripthash"),
             Some(script_str),
             Some(&"utxo"),
             None,
             None,
         ) => {
-            let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
-            let utxos: Vec<UtxoValue> = query
-                .utxo(&script_hash[..])
-                .into_iter()
-                .map(UtxoValue::from)
-                .collect();
-            // XXX paging?
-            json_response(utxos, TTL_SHORT)
+            let _timer = query.daemon.rest_latency.with_label_values(&["unspent"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["unspent"]).inc();
+
+            let (addresses, is_xpub) = xpub_multi_or_single(script_str);
+
+            match is_xpub {
+                true => {
+                    let xpub = ExtendedPubKey::from_str(script_str);
+                    match xpub {
+                        Ok(xpub) => {
+                            let response: Vec<AddressInfo> = handle_xpub_utxo(xpub, query, config);
+                            json_response(json!(response), TTL_SHORT)
+                        }
+                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
+                    }
+                }
+                _ => {
+                    let response: Vec<AddressInfo> =
+                        handle_multiaddr_utxo(addresses, query, config);
+                    json_response(json!(response), TTL_SHORT)
+                }
+            }
         }
+        // GET /tx/:txid
         (&Method::GET, Some(&"tx"), Some(hash), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["tx_index"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["tx_index"]).inc();
+
             let hash = Sha256dHash::from_hex(hash)?;
             let tx = query
                 .lookup_txn(&hash)
@@ -809,6 +904,7 @@ fn handle_request(
 
             json_response(tx, ttl)
         }
+        // GET /tx/:txid/hex
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"hex"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let rawtx = query
@@ -817,13 +913,14 @@ fn handle_request(
             let ttl = ttl_by_depth(query.get_tx_status(&hash).block_height, query);
             http_message(StatusCode::OK, hex::encode(rawtx), ttl)
         }
+        // GET /tx/:txid/status
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"status"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let status = query.get_tx_status(&hash);
             let ttl = ttl_by_depth(status.block_height, query);
             json_response(status, ttl)
         }
-
+        // GET /tx/:txid/merkle-proof
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"merkle-proof"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let blockid = query.chain().tx_confirming_block(&hash).ok_or_else(|| {
@@ -837,6 +934,7 @@ fn handle_request(
                 ttl,
             )
         }
+        // GET /tx/:txid/outspend/:vout
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspend"), Some(index), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let outpoint = OutPoint {
@@ -855,6 +953,7 @@ fn handle_request(
             );
             json_response(spend, ttl)
         }
+        // GET /tx/:txid/outspends
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspends"), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let tx = query
@@ -873,6 +972,7 @@ fn handle_request(
             // @TODO long ttl if all outputs are either spent long ago or unspendable
             json_response(spends, TTL_SHORT)
         }
+        // POST /tx
         (&Method::GET, Some(&"broadcast"), None, None, None, None)
         | (&Method::POST, Some(&"tx"), None, None, None, None) => {
             // accept both POST and GET for backward compatibility.
@@ -889,24 +989,108 @@ fn handle_request(
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
             http_message(StatusCode::OK, txid.to_hex(), 0)
         }
-
+        // GET /mempool
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["mempool"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["mempool"]).inc();
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
         }
+        // GET /mempool/txids
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
+        // GET /mempool/recent
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
             let recent = mempool.recent_txs_overview();
             json_response(recent, TTL_SHORT /* TODO: TTL TBD */)
         }
-
+        // GET /fee-estimates
         (&Method::GET, Some(&"fee-estimates"), None, None, None, None) => {
             json_response(query.estimate_fee_targets(), TTL_SHORT)
         }
+        // GET /mempool/txs
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), None, None, None) => {
+            let txs = query
+                .mempool()
+                .txids()
+                .iter()
+                .take(MAX_MEMPOOL_TXS)
+                .map(|txid| {
+                    query
+                        .mempool()
+                        .lookup_txn(&txid)
+                        .map(|tx| (tx, None))
+                        .ok_or_else(|| "missing tx".to_string())
+                })
+                .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
+
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+        // GET /block-index/:hash
+        (&Method::GET, Some(&"block-index"), Some(hash), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["block_index"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["block_index"]).inc();
+
+            let hash = Sha256dHash::from_hex(hash)?;
+            let blockhm = query
+                .chain()
+                .get_block_with_meta(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+            let block_value = BlockValue::from(blockhm);
+
+            let txids = query
+                .chain()
+                .get_block_txids(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let confirmed_blockid = query.chain().blockid_by_hash(&hash);
+
+            let txs = txids
+                .iter()
+                .take(CHAIN_TXS_PER_PAGE)
+                .map(|txid| {
+                    query
+                        .lookup_txn(&txid)
+                        .map(|tx| (tx, confirmed_blockid.clone()))
+                        .ok_or_else(|| "missing tx".to_string())
+                })
+                .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
+
+            let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query);
+            let tx_values = prepare_txs(txs, query, config);
+            let info = BlockInfo::new(block_value, tx_values);
+
+            json_response(json!(info), ttl)
+        }
+        // GET /multiaddr/:multiaddr
+        (&Method::GET, Some(&"multiaddr"), Some(input), None, None, None) => {
+            let _timer = query.daemon.rest_latency.with_label_values(&["multiaddr"]).start_timer();
+            query.daemon.rest_count.with_label_values(&["multiaddr"]).inc();
+
+            let (addresses, is_xpub) = xpub_multi_or_single(input);
+
+            match is_xpub {
+                true => {
+                    let xpub = ExtendedPubKey::from_str(input);
+                    match xpub {
+                        Ok(xpub) => {
+                            let response: Vec<AddressInfo> = handle_xpub_info(xpub, query, config);
+                            json_response(json!(response), TTL_SHORT)
+                        }
+                        Err(e) => bail!(HttpError::from(format!("Invalid xpub provided: {}", e))),
+                    }
+                }
+                _ => {
+                    let response: Vec<AddressInfo> =
+                        handle_multiaddr_info(addresses, query, config);
+                    json_response(json!(response), TTL_SHORT)
+                }
+            }
+        }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id
         (&Method::GET, Some(&"asset"), Some(asset_str), None, None, None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
             let asset_entry = query
@@ -917,6 +1101,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id/txs
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"txs"), None, None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
 
@@ -942,6 +1127,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id/txs/chain[/:last_seen]
         (
             &Method::GET,
             Some(&"asset"),
@@ -964,6 +1150,7 @@ fn handle_request(
         }
 
         #[cfg(feature = "liquid")]
+        // GET /asset/:asset_id/txs/mempool
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"txs"), Some(&"mempool"), None) => {
             let asset_id = Sha256dHash::from_hex(asset_str)?;
 
@@ -1043,7 +1230,7 @@ fn blocks(query: &Query, start_height: Option<usize>) -> Result<Response<Body>, 
     json_response(values, TTL_SHORT)
 }
 
-fn to_scripthash(
+pub(crate) fn to_scripthash(
     script_type: &str,
     script_str: &str,
     network: &Network,
@@ -1086,7 +1273,7 @@ fn parse_scripthash(scripthash: &str) -> Result<FullHash, HttpError> {
 }
 
 #[derive(Debug)]
-struct HttpError(StatusCode, String);
+pub struct HttpError(StatusCode, String);
 
 impl HttpError {
     fn not_found(msg: String) -> Self {

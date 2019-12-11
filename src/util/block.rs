@@ -3,7 +3,7 @@ use std::fmt;
 use std::iter::FromIterator;
 use std::slice;
 
-use bitcoin::hashes::sha256d::Hash as Sha256dHash;
+use bitcoin::hashes::sha256d::{Hash as Sha256dHash, Hash};
 use bitcoin::util::hash::BitcoinHash;
 use time;
 
@@ -14,7 +14,8 @@ use elements::encode::serialize;
 
 use crate::chain::{Block, BlockHeader};
 use crate::errors::*;
-use crate::new_index::BlockEntry;
+use crate::new_index::{BlockEntry, ScriptStats};
+use crate::rest::{BlockValue, TransactionValue, UtxoValue};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockId {
@@ -313,5 +314,90 @@ impl BlockMeta {
                 .as_f64()
                 .chain_err(|| "weight not a number")? as u32,
         })
+    }
+}
+
+#[derive(Serialize)]
+pub struct AddressInfo {
+    pub address: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub chain_stats: Option<ScriptStats>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mempool_stats: Option<ScriptStats>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub utxo: Vec<UtxoValue>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub chain_txs: Vec<TransactionValue>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub mempool_txs: Vec<TransactionValue>,
+}
+
+impl AddressInfo {
+    pub fn new(
+        address: String,
+        stats: (ScriptStats, ScriptStats),
+        chain_txs: Vec<TransactionValue>,
+        mempool_txs: Vec<TransactionValue>,
+    ) -> AddressInfo {
+        AddressInfo {
+            address,
+            chain_stats: Some(stats.0),
+            mempool_stats: Some(stats.1),
+            utxo: vec![],
+            chain_txs,
+            mempool_txs,
+        }
+    }
+
+    pub fn new_stats(address: String, stats: (ScriptStats, ScriptStats)) -> AddressInfo {
+        AddressInfo {
+            address,
+            utxo: vec![],
+            chain_stats: Some(stats.0),
+            mempool_stats: Some(stats.1),
+            chain_txs: vec![],
+            mempool_txs: vec![],
+        }
+    }
+
+    pub fn new_utxo(address: String, utxos: Vec<UtxoValue>) -> AddressInfo {
+        AddressInfo {
+            address,
+            utxo: utxos,
+            chain_stats: None,
+            mempool_stats: None,
+            chain_txs: vec![],
+            mempool_txs: vec![],
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct BlockInfo {
+    pub block: BlockValue,
+    pub transactions: Vec<TransactionValue>,
+}
+
+impl BlockInfo {
+    pub fn new(block: BlockValue, transactions: Vec<TransactionValue>) -> BlockInfo {
+        BlockInfo {
+            block,
+            transactions,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct BlockHashInfo {
+    pub block: String,
+    pub transactions: Vec<Hash>,
+}
+
+impl BlockHashInfo {
+    pub fn new(block: String, transactions: Vec<Hash>) -> BlockHashInfo {
+        BlockHashInfo {
+            block,
+            transactions,
+        }
     }
 }
